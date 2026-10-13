@@ -1,0 +1,19 @@
+[project]
+name = "video-downloader"
+version = "1.0.0"
+description = "Reelhouse: YouTube downloader and personal media library (Django + yt-dlp + Celery)"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "django>=5.0,<6.0",
+    "yt-dlp[default]>=2025.1.1",
+    "psycopg[binary]>=3.1",
+    "celery>=5.4,<6.0",
+    "redis>=5.0",
+    "python-dotenv>=1.0",
+    "whitenoise>=6.6",
+    "gunicorn>=22.0",
+]
+
+[tool.uv]
+package = false   # an application, not an installable library

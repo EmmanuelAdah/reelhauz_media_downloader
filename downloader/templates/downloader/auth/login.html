@@ -1,0 +1,20 @@
+{% extends "downloader/base.html" %}
+{% block title %}Log in{% endblock %}
+{% block page %}
+<div class="auth-wrap">
+  <button class="icon-btn auth-theme" id="theme-toggle" aria-label="Toggle dark mode"><i class="bi bi-moon-stars"></i></button>
+  <section class="auth-card">
+    <a class="brand brand-lg" href="{% url 'home' %}"><i class="bi bi-film"></i><span>Reelhouse</span></a>
+    <h1>Welcome back</h1>
+    <p class="text-body-secondary">Log in to sync where you stopped watching.</p>
+    <form method="post" novalidate>{% csrf_token %}
+      {% if form.non_field_errors %}<div class="alert alert-danger">{{ form.non_field_errors.0 }}</div>{% endif %}
+      <div class="mb-3"><label class="form-label" for="{{ form.username.id_for_label }}">Username</label>{{ form.username }}</div>
+      <div class="mb-4"><label class="form-label" for="{{ form.password.id_for_label }}">Password</label>{{ form.password }}</div>
+      <input type="hidden" name="next" value="{{ next }}">
+      <button class="btn btn-primary w-100" type="submit">Log in</button>
+    </form>
+    <p class="auth-alt">New here? <a href="{% url 'register' %}">Create an account</a> &middot; <a href="{% url 'home' %}">Continue without one</a></p>
+  </section>
+</div>
+{% endblock %}

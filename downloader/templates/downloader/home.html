@@ -1,0 +1,56 @@
+{% extends "downloader/base.html" %}
+{% block title %}Download a YouTube video{% endblock %}
+{% block content %}
+<div id="download-app"
+     data-metadata-url="{% url 'api_quick_metadata' %}"
+     data-download-url="{% url 'api_quick_download' %}"
+     data-initial-url="{{ initial_url }}"
+     data-default-preset="{{ default_preset }}">
+  <header class="page-head">
+    <h1>Download a YouTube video</h1>
+    <p>Paste a link, pick a quality, and save the file wherever you like on your device. {% if not user.is_authenticated %}No account needed.{% endif %}</p>
+  </header>
+
+  <form id="fetch-form" class="url-form" novalidate>
+    <input type="url" id="url-input" name="url" value="{{ initial_url }}" placeholder="Paste YouTube URL" aria-label="YouTube URL" autocomplete="off" inputmode="url" required>
+    <button class="btn btn-primary" type="submit" id="fetch-btn"><i class="bi bi-search"></i> Fetch video</button>
+  </form>
+  <div class="inline-error" id="fetch-error" role="alert" hidden></div>
+
+  <div class="preview-card" id="skeleton" hidden aria-hidden="true">
+    <div class="skeleton skeleton-thumb"></div>
+    <div class="preview-info"><div class="skeleton skeleton-line w-75"></div><div class="skeleton skeleton-line w-50"></div><div class="skeleton skeleton-line w-25"></div></div>
+  </div>
+
+  <section class="preview-card" id="preview" hidden>
+    <img id="pv-thumb" class="preview-thumb" alt="" referrerpolicy="no-referrer">
+    <div class="preview-info">
+      <h2 id="pv-title"></h2>
+      <div class="vcard-meta"><span id="pv-uploader"></span><span id="pv-duration"></span><span id="pv-date"></span></div>
+      <fieldset class="format-picker">
+        <legend>Choose a format</legend>
+        <div id="format-list" class="format-list"></div>
+      </fieldset>
+      <button class="btn btn-primary" id="start-btn" type="button"><i class="bi bi-cloud-arrow-down"></i> Start download</button>
+      <p class="fine-print">Up to {{ max_mb }} MB and {{ max_minutes }} minutes per video.</p>
+    </div>
+  </section>
+
+  <section class="job-card" id="job" hidden>
+    <h2 id="job-title" class="h5"></h2>
+    <div id="job-progress"></div>
+    <p class="card-error" id="job-error" hidden></p>
+    <div class="job-actions" id="job-actions" hidden>
+      <button class="btn btn-primary" id="job-save" type="button"><i class="bi bi-download"></i> <span>Save to my device</span></button>
+      <button class="btn btn-ghost" id="job-again" type="button">Download another</button>
+    </div>
+    <p class="fine-print mb-0" id="job-hint" hidden></p>
+  </section>
+
+  <p class="fine-print how-note">
+    Your file is prepared on the server, then sent to you. It is deleted from the server as soon as you've saved it.
+    Progress keeps updating if you switch pages: look for the <i class="bi bi-arrow-down-circle"></i> Downloads button at the top.
+  </p>
+</div>
+<template id="progress-template">{% include "downloader/components/download_progress.html" %}</template>
+{% endblock %}

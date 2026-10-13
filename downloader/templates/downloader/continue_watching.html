@@ -1,0 +1,25 @@
+{% extends "downloader/base.html" %}
+{% block title %}Continue watching{% endblock %}
+{% block content %}
+<div id="cw-app" data-authenticated="{{ authenticated|yesno:'true,false' }}">
+  <header class="page-head">
+    <h1>Continue watching</h1>
+    <p>Everything you've played, with where you stopped. Resume reopens the file from where it's stored on this device (Chrome, Edge, Brave); other browsers ask you to locate it once.
+      {% if not authenticated %}Saved in this browser only. <a href="{% url 'register' %}">Create an account</a> to keep it across devices.{% endif %}</p>
+  </header>
+
+  <section id="cw-progress" hidden aria-labelledby="cw-progress-title">
+    <h2 class="section-title" id="cw-progress-title">Continue watching</h2>
+    <div class="video-grid" id="cw-grid"></div>
+  </section>
+
+  <section id="cw-recent" hidden aria-labelledby="cw-recent-title">
+    <h2 class="section-title" id="cw-recent-title">Recently watched</h2>
+    <div class="video-grid" id="recent-grid"></div>
+  </section>
+
+  <div id="cw-empty" hidden>
+    {% include "downloader/components/empty_state.html" with icon="bi-play-circle" title="Nothing played yet" text="Play a downloaded file and it will be listed here, with where you stopped." cta_url="/watch/" cta_label="Play a file" %}
+  </div>
+</div>
+{% endblock %}

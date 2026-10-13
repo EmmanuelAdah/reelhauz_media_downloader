@@ -1,0 +1,18 @@
+<div class="progress-panel" data-role="progress">
+  <div class="stage-line">
+    <span class="stage-name" data-role="stage">Pending…</span>
+    <span class="stage-percent" data-role="percent">0%</span>
+  </div>
+  <div class="filmstrip" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" data-role="track">
+    <div class="filmstrip-fill" data-role="bar" style="width: 0%"></div>
+  </div>
+  <div class="progress-meta">
+    <span data-role="bytes"></span>
+    <span>Speed <strong data-role="speed">—</strong></span>
+    <span>ETA <strong data-role="eta">—</strong></span>
+  </div>
+  <p class="progress-notice" data-role="notice" hidden></p>
+  <ol class="stages" aria-label="Download stages">
+    <li data-stage="pending">Pending</li><li data-stage="fetching">Fetching</li><li data-stage="downloading">Downloading</li><li data-stage="processing">Processing</li><li data-stage="completed">Completed</li>
+  </ol>
+</div>
