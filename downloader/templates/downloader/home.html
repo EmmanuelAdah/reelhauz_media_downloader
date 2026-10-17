@@ -4,6 +4,7 @@
 <div id="download-app"
      data-metadata-url="{% url 'api_quick_metadata' %}"
      data-download-url="{% url 'api_quick_download' %}"
+     data-command-url="{% url 'api_quick_command' %}"
      data-initial-url="{{ initial_url }}"
      data-default-preset="{{ default_preset }}">
   <header class="page-head">
@@ -16,6 +17,54 @@
     <button class="btn btn-primary" type="submit" id="fetch-btn"><i class="bi bi-search"></i> Fetch video</button>
   </form>
   <div class="inline-error" id="fetch-error" role="alert" hidden></div>
+
+  <details class="access" id="access">
+    <summary><i class="bi bi-shield-lock"></i> YouTube asking to verify you're not a robot? Choose how to continue</summary>
+    <div class="access-body">
+      <div class="notice" id="access-alert" role="alert" hidden></div>
+      <p class="fine-print">YouTube sometimes refuses automated requests from a server's address. You decide how this download
+        identifies itself. Nothing here is kept: credentials are used for the current request only.</p>
+      <fieldset class="access-options">
+        <legend class="visually-hidden">How should this download access YouTube?</legend>
+        <label class="access-opt"><input type="radio" name="access" value="auto" checked>
+          <span><strong>Automatic</strong><small>The default. Works unless YouTube is challenging this server.</small></span></label>
+        {% if browser_cookies_allowed %}
+        <label class="access-opt"><input type="radio" name="access" value="browser">
+          <span><strong>Use my browser's YouTube login</strong>
+            <small>Reads the login from a browser on this computer, for this download only. YouTube may restrict accounts used for automated downloads, so use an account you're comfortable with.</small></span></label>
+        <div class="access-sub" id="access-browser" hidden>
+          <label class="tool">Browser
+            <select id="access-browser-select" class="form-select form-select-sm">
+              {% for value, label in browsers %}<option value="{{ value }}">{{ label }}</option>{% endfor %}
+            </select></label>
+        </div>
+        {% endif %}
+        <label class="access-opt"><input type="radio" name="access" value="cookies">
+          <span><strong>Use a cookies.txt file</strong>
+            <small>Export your YouTube cookies (Netscape <code>cookies.txt</code> format) with a browser extension while logged in. Only YouTube/Google cookies are read, held in a private temporary file for this download, and deleted right afterwards.</small></span></label>
+        <div class="access-sub" id="access-cookies" hidden>
+          <input type="file" id="access-cookies-file" accept=".txt,text/plain" class="form-control form-control-sm" aria-label="cookies.txt file">
+          <p class="fine-print mb-0" id="access-cookies-status"></p>
+        </div>
+      </fieldset>
+
+      <div class="access-local">
+        <button type="button" class="btn btn-ghost btn-sm" id="cli-show" aria-expanded="false" aria-controls="cli-panel">
+          <i class="bi bi-terminal"></i> Download on my own computer instead</button>
+        <div id="cli-panel" hidden>
+          <p class="fine-print">This skips the server completely: your own connection and browser login are used. Install
+            <a href="https://github.com/yt-dlp/yt-dlp#installation" target="_blank" rel="noopener noreferrer">yt-dlp</a> and FFmpeg, then run
+            (macOS, Linux or PowerShell):</p>
+          <div class="command-box"><pre id="cli-command" tabindex="0"></pre>
+            <button type="button" class="btn btn-ghost btn-sm" id="cli-copy" data-copy="#cli-command">Copy</button></div>
+          <p class="fine-print">If YouTube asks you to sign in there too, use this version, with your browser's name:</p>
+          <div class="command-box"><pre id="cli-command-login" tabindex="0"></pre>
+            <button type="button" class="btn btn-ghost btn-sm" data-copy="#cli-command-login">Copy</button></div>
+          <p class="fine-print mb-0">Then open the saved file in <a href="{% url 'watch' %}">Play a file</a>. The id in its name restores your place.</p>
+        </div>
+      </div>
+    </div>
+  </details>
 
   <div class="preview-card" id="skeleton" hidden aria-hidden="true">
     <div class="skeleton skeleton-thumb"></div>
@@ -39,6 +88,9 @@
   <section class="job-card" id="job" hidden>
     <h2 id="job-title" class="h5"></h2>
     <div id="job-progress"></div>
+    <div class="job-live" id="job-live">
+      <button class="btn btn-ghost btn-sm" id="job-cancel" type="button"><i class="bi bi-x-circle"></i> <span>Cancel download</span></button>
+    </div>
     <p class="card-error" id="job-error" hidden></p>
     <div class="job-actions" id="job-actions" hidden>
       <button class="btn btn-primary" id="job-save" type="button"><i class="bi bi-download"></i> <span>Save to my device</span></button>

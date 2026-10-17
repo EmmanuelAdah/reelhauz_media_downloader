@@ -1,6 +1,7 @@
 """Tiny fixed-window rate limiter backed by Django's cache (Redis in production)."""
 from __future__ import annotations
 
+import logging
 from functools import wraps
 from typing import Callable
 
@@ -8,15 +9,22 @@ from django.conf import settings
 from django.core.cache import cache
 from django.http import JsonResponse
 
+logger = logging.getLogger(__name__)
+
 
 def allow(bucket: str, ident: str | int, limit: int, window: int) -> bool:
     key = f"rl:{bucket}:{ident}"
-    if cache.add(key, 1, timeout=window):
-        return True
     try:
-        return cache.incr(key) <= limit
-    except ValueError:  # key expired between add() and incr()
-        cache.set(key, 1, timeout=window)
+        if cache.add(key, 1, timeout=window):
+            return True
+        try:
+            return cache.incr(key) <= limit
+        except ValueError:  # key expired between add() and incr()
+            cache.set(key, 1, timeout=window)
+            return True
+    except Exception:
+        # Cache unreachable: fail open here. The download code reports the outage with a clear message.
+        logger.warning("Rate limiter cache unavailable; not limiting this request", exc_info=True)
         return True
 
 

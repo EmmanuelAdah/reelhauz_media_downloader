@@ -9,6 +9,8 @@ import django
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
 os.environ.setdefault("DATABASE_URL", "sqlite:///db.sqlite3")
+os.environ.setdefault("DJANGO_DEBUG", "True")
+os.environ.setdefault("ALLOW_BROWSER_COOKIES", "True")
 django.setup()
 
 from django.test import Client

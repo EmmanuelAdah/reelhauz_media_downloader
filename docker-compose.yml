@@ -5,6 +5,7 @@ x-app: &app
     DJANGO_DEBUG: "False"
     DJANGO_ALLOWED_HOSTS: "localhost,127.0.0.1"
     DATABASE_URL: postgres://video_user:video_pass@db:5432/video_downloader
+    DOWNLOAD_BACKEND: celery   # production style: a dedicated worker container does the downloading
     REDIS_URL: redis://redis:6379/0
     DOWNLOAD_TMP_DIR: /app/tmp_downloads
   volumes:

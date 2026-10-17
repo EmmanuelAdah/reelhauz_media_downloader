@@ -166,6 +166,11 @@ DOWNLOAD_TMP_DIR = Path(os.environ.get("DOWNLOAD_TMP_DIR", str(BASE_DIR / "tmp_d
 # --------------------------------------------------------------------------- #
 # Downloader configuration
 # --------------------------------------------------------------------------- #
+# "thread": downloads run in background threads of the web process, so starting the app starts everything.
+# "celery": hand downloads to a separate Celery worker (needs Redis + `celery -A config worker`).
+DOWNLOAD_BACKEND = os.environ.get("DOWNLOAD_BACKEND", "celery" if TESTING else "thread").strip().lower()
+if DOWNLOAD_BACKEND not in {"thread", "celery"}:
+    raise ImproperlyConfigured("DOWNLOAD_BACKEND must be 'thread' or 'celery'.")
 MAX_DOWNLOAD_SIZE_MB = env_int("MAX_DOWNLOAD_SIZE_MB", 1024)  # 0 disables
 MAX_VIDEO_DURATION_SECONDS = env_int("MAX_VIDEO_DURATION_SECONDS", 3 * 3600)  # 0 disables
 MAX_CONCURRENT_DOWNLOADS = env_int("MAX_CONCURRENT_DOWNLOADS", 5)  # server-wide
@@ -175,6 +180,13 @@ CHECK_WORKER_BEFORE_START = env_bool("CHECK_WORKER_BEFORE_START", True)
 YTDLP_COOKIES_FILE = os.environ.get("YTDLP_COOKIES_FILE", "")  # optional, for age-gated/bot-checked videos
 YTDLP_COOKIES_FROM_BROWSER = os.environ.get("YTDLP_COOKIES_FROM_BROWSER", "")  # local use: "firefox", "chrome" or "chrome:Profile 1"
 YTDLP_PLAYER_CLIENTS = os.environ.get("YTDLP_PLAYER_CLIENTS", "")  # pin YouTube clients, e.g. "tv,tv_downgraded" (disables automatic fallback)
+# Let a visitor pick "use my browser's YouTube login". That reads cookies from a browser on THIS machine, so it is only
+# offered to requests coming from this machine (loopback, no proxy) and only when enabled (default: in DEBUG).
+ALLOW_BROWSER_COOKIES = env_bool("ALLOW_BROWSER_COOKIES", DEBUG)
+MAX_COOKIES_FILE_KB = env_int("MAX_COOKIES_FILE_KB", 1024)
+# FFmpeg is needed to merge video+audio and convert to MP3/M4A. Lookup order: this setting (a binary or its folder),
+# FFmpeg on the system PATH, then the copy bundled with the project (installed by `uv sync`).
+FFMPEG_LOCATION = os.environ.get("FFMPEG_LOCATION", "")
 YTDLP_PROXY = os.environ.get("YTDLP_PROXY", "")  # e.g. http://user:pass@host:port; a residential/home IP avoids most bot checks
 YTDLP_JS_RUNTIME = os.environ.get("YTDLP_JS_RUNTIME", "")  # deno | node | bun | quickjs (auto-detected when empty)
 RATE_LIMIT_METADATA = (env_int("RATE_LIMIT_METADATA", 10), 60)  # per user (or IP when anonymous), per minute

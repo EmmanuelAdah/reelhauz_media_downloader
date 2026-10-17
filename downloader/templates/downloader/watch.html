@@ -4,7 +4,7 @@
 <div id="watch-app" data-authenticated="{{ authenticated|yesno:'true,false' }}">
   <header class="page-head">
     <h1>Play a file</h1>
-    <p>Open a video or audio file from your device. The file never leaves your computer; Reelhouse only remembers where you stopped{% if not authenticated %}, in this browser{% endif %}, and (in Chrome, Edge and Brave) where the file is, so you can resume without choosing it again.</p>
+    <p>Open a video or audio file from your device. The file never leaves your computer; Reelhauz only remembers where you stopped{% if not authenticated %}, in this browser{% endif %}, and (in Chrome, Edge and Brave) where the file is, so you can resume without choosing it again.</p>
   </header>
 
   <div class="notice notice-dismissible" id="resume-hint" role="status" hidden>
@@ -19,12 +19,12 @@
   <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="Choose a video or audio file">
     <i class="bi bi-folder2-open"></i>
     <strong>Choose a file or drop it here</strong>
-    <span>Files saved by Reelhouse are named “Title [id].mp4”, which lets us find your place again.</span>
+    <span>Files saved by Reelhauz are named “Title [id].mp4”, which lets us find your place again.</span>
     <input type="file" id="file-input" accept="video/*,audio/*,.mp4,.m4a,.mp3,.webm,.mkv" hidden>
   </div>
 
   <section class="saved-files" id="saved-files" hidden aria-labelledby="saved-title">
-    <h2 id="saved-title" class="h6">Files Reelhouse remembers on this device</h2>
+    <h2 id="saved-title" class="h6">Files Reelhauz remembers on this device</h2>
     <ul id="saved-list" class="saved-list"></ul>
   </section>
 

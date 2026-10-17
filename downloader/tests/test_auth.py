@@ -54,6 +54,18 @@ class AuthTests(AppTestCase):
         self.assertContains(member, 'id="tray"')  # live downloads tray on every page
         self.assertContains(self.client.get(reverse("watch")), 'id="tray"')
 
+    def test_brand_name_is_reelhauz_everywhere(self):
+        self.login()
+        for name in ("home", "watch", "continue_watching", "settings"):
+            page = self.client.get(reverse(name)).content.decode()
+            self.assertIn("Reelhauz", page, name)
+            self.assertNotIn("Reelhouse", page, name)
+        self.client.logout()
+        for name in ("login", "register", "home"):
+            page = self.client.get(reverse(name)).content.decode()
+            self.assertIn("Reelhauz", page, name)
+            self.assertNotIn("Reelhouse", page, name)
+
     def test_settings_default_preset_roundtrip(self):
         self.login()
         res = self.client.post(reverse("settings"), {"default_preset": "audio_mp3"})

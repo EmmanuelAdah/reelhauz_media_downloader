@@ -26,7 +26,7 @@ def post(client, name, data, **kw):
 
 
 def fake_download(content=b"downloaded-bytes", ext="mp4"):
-    def _download(url, preset, outdir, *, filename_stem, progress_callback, max_filesize):
+    def _download(url, preset, outdir, *, filename_stem, progress_callback, max_filesize, auth=None):
         progress_callback(ProgressUpdate("downloading", 5, 10, 1.0, 1))
         path = Path(outdir) / f"{filename_stem}.{ext}"
         path.write_bytes(content)
@@ -167,7 +167,7 @@ class DownloadFlowTests(AppTestCase):
                 seen.append(state["status"])
             return original(token, state)
 
-        def download(url, preset, outdir, *, filename_stem, progress_callback, max_filesize):
+        def download(url, preset, outdir, *, filename_stem, progress_callback, max_filesize, auth=None):
             progress_callback(ProgressUpdate("downloading", 5, 10, 1.0, 1))
             progress_callback(ProgressUpdate("processing"))
             path = Path(outdir) / f"{filename_stem}.mp4"
