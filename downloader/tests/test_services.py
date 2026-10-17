@@ -338,3 +338,141 @@ class BrowserCookiesTests(SimpleTestCase):
         self.assertEqual(err.code, "cookies")
         self.assertIn("YTDLP_COOKIES_FROM_BROWSER", err.hint)
         self.assertNotIn("YTDLP", err.message)
+
+
+class ClientRetryDetailTests(SimpleTestCase):
+    """Errors seen in the wild: the fallback client answers 'The page needs to be reloaded'."""
+
+    BOT = "ERROR: [youtube] x: Sign in to confirm you\u2019re not a bot"
+    RELOAD = "ERROR: [youtube] x: The page needs to be reloaded."
+    RAW = {"id": VID, "title": "T", "uploader": "U", "duration": 60, "upload_date": "20240501", "thumbnail": "", "formats": []}
+
+    def setUp(self):
+        from django.core.cache import cache
+
+        cache.clear()
+        self.attempts = []
+
+    def run_with(self, behaviour):
+        """behaviour(clients) -> error text to raise, or None to succeed."""
+        def make(opts):
+            clients = opts.get("extractor_args", {}).get("youtube", {}).get("player_client")
+            self.attempts.append(clients)
+            ydl = mock.MagicMock()
+            ydl.__enter__.return_value = ydl
+
+            def extract(url, download):
+                failure = behaviour(clients)
+                if failure:
+                    raise Exception(failure)
+                return self.RAW
+
+            ydl.extract_info.side_effect = extract
+            return ydl
+
+        with mock.patch("yt_dlp.YoutubeDL", side_effect=make):
+            return svc.extract_video_info(f"https://youtu.be/{VID}")
+
+    @override_settings(DEBUG=False)
+    def test_page_needs_reloading_is_classified_and_hidden_from_visitors(self):
+        err = svc._translate_exception(Exception(self.RELOAD))
+        self.assertEqual(err.code, "client_rejected")
+        self.assertIn("try again", err.message.lower())
+
+    def test_reload_error_from_one_client_moves_on_to_the_next(self):
+        info = self.run_with(lambda c: self.RELOAD if c is None else (None if c == ["tv", "tv_downgraded"] else self.BOT))
+        self.assertEqual(info.title, "T")
+
+    def test_unknown_error_after_a_bot_check_keeps_trying(self):
+        behaviour = {None: self.BOT, ("tv", "tv_downgraded"): "ERROR: something odd", ("web_embedded", "tv"): None}
+        info = self.run_with(lambda c: behaviour[tuple(c) if c else None])
+        self.assertEqual(info.title, "T")
+        self.assertEqual(len(self.attempts), 3)
+
+    @override_settings(DEBUG=False)
+    def test_root_cause_is_reported_when_fallbacks_fail_differently(self):
+        # exactly the log from the field: defaults -> bot check, tv -> "page needs to be reloaded"
+        with self.assertRaises(DownloaderError) as ctx:
+            self.run_with(lambda c: self.BOT if c is None else self.RELOAD)
+        self.assertEqual(ctx.exception.code, "bot_check")             # not a vague "something went wrong"
+        self.assertIn("blocking downloads", ctx.exception.message)
+        self.assertEqual(len(self.attempts), len(svc.CANONICAL_STRATEGIES))
+
+    def test_unrelated_errors_never_trigger_retries(self):
+        with self.assertRaises(DownloaderError) as ctx:
+            self.run_with(lambda c: "ERROR: Video unavailable")
+        self.assertEqual((ctx.exception.code, len(self.attempts)), ("unavailable", 1))
+
+
+class FfmpegLookupTests(SimpleTestCase):
+    """FFmpeg is found on the system, from FFMPEG_LOCATION, or from the copy bundled by `uv sync`."""
+
+    def test_configured_location_wins(self):
+        with override_settings(FFMPEG_LOCATION=__file__), mock.patch.object(svc.shutil, "which", return_value="/usr/bin/ffmpeg"):
+            found = svc.find_ffmpeg()
+        self.assertEqual((found.source, found.path), ("FFMPEG_LOCATION", __file__))
+
+    def test_configured_folder_is_accepted(self):
+        import tempfile
+
+        folder = Path(tempfile.mkdtemp())
+        (folder / ("ffmpeg.exe" if svc.os.name == "nt" else "ffmpeg")).write_bytes(b"x")
+        with override_settings(FFMPEG_LOCATION=str(folder)):
+            self.assertEqual(svc.find_ffmpeg().path, str(folder))
+
+    def test_bad_configured_path_falls_back_to_the_system(self):
+        with override_settings(FFMPEG_LOCATION="/definitely/not/here"), mock.patch.object(svc.shutil, "which", return_value="/usr/bin/ffmpeg"):
+            self.assertEqual(svc.find_ffmpeg().source, "system")
+
+    def test_system_ffmpeg_is_used_when_present(self):
+        with override_settings(FFMPEG_LOCATION=""), mock.patch.object(svc.shutil, "which", return_value="/usr/bin/ffmpeg"):
+            self.assertEqual(svc.find_ffmpeg().source, "system")
+
+    def test_bundled_copy_is_the_fallback_when_nothing_is_installed(self):
+        fake = mock.MagicMock()
+        fake.get_ffmpeg_exe.return_value = __file__  # any existing file
+        with override_settings(FFMPEG_LOCATION=""), mock.patch.object(svc.shutil, "which", return_value=None), \
+             mock.patch.dict("sys.modules", {"imageio_ffmpeg": fake}):
+            found = svc.find_ffmpeg()
+        self.assertEqual((found.source, found.path), ("bundled", __file__))
+
+    def test_the_real_bundled_binary_exists_after_uv_sync(self):
+        with override_settings(FFMPEG_LOCATION=""), mock.patch.object(svc.shutil, "which", return_value=None):
+            found = svc.find_ffmpeg()
+        self.assertIsNotNone(found, "imageio-ffmpeg should provide a bundled FFmpeg")
+        self.assertEqual(found.source, "bundled")
+        self.assertTrue(Path(found.path).is_file())
+
+    def test_nothing_found_returns_none(self):
+        with override_settings(FFMPEG_LOCATION=""), mock.patch.object(svc.shutil, "which", return_value=None), \
+             mock.patch.dict("sys.modules", {"imageio_ffmpeg": None}):
+            self.assertIsNone(svc.find_ffmpeg())
+            self.assertFalse(svc.ffmpeg_available())
+
+    def test_yt_dlp_is_pointed_at_a_non_system_ffmpeg_only(self):
+        with mock.patch.object(svc, "find_ffmpeg", return_value=svc.FfmpegInfo("/x/ffmpeg-bundled", "bundled")):
+            self.assertEqual(svc._base_options()["ffmpeg_location"], "/x/ffmpeg-bundled")
+        with mock.patch.object(svc, "find_ffmpeg", return_value=svc.FfmpegInfo("/usr/bin/ffmpeg", "system")):
+            self.assertNotIn("ffmpeg_location", svc._base_options())  # yt-dlp finds it (and ffprobe) itself
+        with mock.patch.object(svc, "find_ffmpeg", return_value=None):
+            self.assertNotIn("ffmpeg_location", svc._base_options())
+
+    @override_settings(DEBUG=False)
+    def test_missing_ffmpeg_error_is_clear_for_visitors_and_actionable_for_operators(self):
+        with mock.patch.object(svc, "find_ffmpeg", return_value=None):
+            with self.assertRaises(DownloaderError) as ctx:
+                svc.download_video(f"https://youtu.be/{VID}", "best", Path("/tmp"), filename_stem="abc")
+        err = ctx.exception
+        self.assertEqual(err.code, "ffmpeg")
+        self.assertIn("FFmpeg couldn't be found", err.message)
+        self.assertNotIn("uv sync", err.message)                 # visitors aren't told to run commands
+        self.assertIn("uv sync", err.hint)                       # operators are
+        for how in ("apt install ffmpeg", "brew install ffmpeg", "winget install", "FFMPEG_LOCATION"):
+            self.assertIn(how, err.hint)
+
+    @override_settings(DEBUG=True)
+    def test_developers_see_the_fix_right_in_the_message(self):
+        with mock.patch.object(svc, "find_ffmpeg", return_value=None):
+            with self.assertRaises(DownloaderError) as ctx:
+                svc.download_video(f"https://youtu.be/{VID}", "best", Path("/tmp"), filename_stem="abc")
+        self.assertIn("uv sync", ctx.exception.message)

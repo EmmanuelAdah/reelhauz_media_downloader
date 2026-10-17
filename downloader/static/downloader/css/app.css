@@ -1,4 +1,4 @@
-/* Reelhouse — a personal screening room for downloaded video.
+/* Reelhauz — a personal screening room for downloaded video.
    One signature element: progress is drawn as a strip of 35mm film. */
 
 :root {
@@ -259,3 +259,30 @@ a { color: var(--rh-accent); }
 .section-title { font-size: 1.15rem; margin: 1.5rem 0 0.9rem; }
 #cw-app section:first-of-type .section-title { margin-top: 0; }
 .watched-badge { display: inline-flex; align-items: center; gap: 0.3rem; color: var(--rh-accent); font-weight: 600; }
+
+/* ---------- Cancelled / failed stage ---------- */
+.status-cancelled { background: var(--rh-sunken); color: var(--rh-muted); }
+.stages li.is-failed { background: var(--rh-danger); border-color: var(--rh-danger); color: #fff; font-weight: 600; }
+.progress-panel.is-cancelled .filmstrip-fill { background: var(--rh-muted); }
+.job-live[hidden] { display: none; }
+.job-live { display: flex; }
+
+/* ---------- Access options (browser login / cookies / run locally) ---------- */
+.visually-hidden { position: absolute !important; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.access { margin-top: 0.9rem; border: 1px solid var(--rh-line); border-radius: var(--rh-radius); background: var(--rh-panel); }
+.access > summary { cursor: pointer; padding: 0.7rem 1rem; font-weight: 600; color: var(--rh-muted); list-style: none; }
+.access > summary::-webkit-details-marker { display: none; }
+.access > summary i { margin-right: 0.4rem; color: var(--rh-accent); }
+.access[open] > summary { color: var(--rh-ink); border-bottom: 1px solid var(--rh-line); }
+.access-body { padding: 1rem; display: flex; flex-direction: column; gap: 0.75rem; }
+.access-options { border: 0; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+.access-opt { display: flex; gap: 0.7rem; align-items: flex-start; padding: 0.6rem 0.8rem; border: 1px solid var(--rh-line); border-radius: 8px; background: var(--rh-bg); cursor: pointer; }
+.access-opt input { margin-top: 0.3rem; accent-color: var(--rh-accent); }
+.access-opt span { display: flex; flex-direction: column; }
+.access-opt small { color: var(--rh-muted); }
+.access-opt:has(input:checked) { border-color: var(--rh-accent); background: color-mix(in srgb, var(--rh-accent) 8%, var(--rh-bg)); }
+.access-sub { margin: -0.15rem 0 0.1rem 2.1rem; display: flex; flex-direction: column; gap: 0.4rem; }
+.access-sub[hidden], #cli-panel[hidden] { display: none; }
+.access-local { border-top: 1px solid var(--rh-line); padding-top: 0.75rem; display: flex; flex-direction: column; gap: 0.6rem; align-items: flex-start; }
+.command-box { display: flex; gap: 0.5rem; align-items: flex-start; width: 100%; }
+.command-box pre { flex: 1; margin: 0; padding: 0.6rem 0.8rem; border-radius: 8px; background: var(--rh-film); color: #d7e3ee; font-size: 0.82rem; white-space: pre-wrap; word-break: break-all; }

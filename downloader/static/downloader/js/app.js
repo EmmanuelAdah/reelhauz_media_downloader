@@ -1,4 +1,4 @@
-/* Reelhouse front end: vanilla JS only. */
+/* Reelhauz front end: vanilla JS only. */
 (function () {
   "use strict";
 
@@ -98,12 +98,18 @@
 
   /* ------------------------------------------------------ progress widget */
   const STAGES = ["pending", "fetching", "downloading", "processing", "completed"];
+  const STAGE_LABEL = { pending: "Pending", fetching: "Fetching", downloading: "Downloading", processing: "Processing", completed: "Completed" };
   function renderProgress(root, v) {
     const panel = root.matches("[data-role=progress]") ? root : $("[data-role=progress]", root);
     if (!panel) return;
     const pct = Math.round(v.percent || 0);
-    const active = v.is_active || v.is_completed;
-    $("[data-role=stage]", panel).textContent = v.status === "failed" ? "Failed" : v.status_label + (v.is_active ? "…" : "");
+    const failed = v.status === "failed", cancelled = v.status === "cancelled";
+    let label;
+    if (failed) label = "Failed" + (STAGE_LABEL[v.failed_stage] ? " while " + STAGE_LABEL[v.failed_stage].toLowerCase() : "");
+    else if (cancelled) label = "Cancelled";
+    else if (v.cancelling) label = "Cancelling…";
+    else label = v.status_label + (v.is_active ? "…" : "");
+    $("[data-role=stage]", panel).textContent = label;
     $("[data-role=percent]", panel).textContent = pct + "%";
     $("[data-role=bar]", panel).style.width = pct + "%";
     $("[data-role=track]", panel).setAttribute("aria-valuenow", String(pct));
@@ -113,13 +119,16 @@
     const notice = $("[data-role=notice]", panel);
     notice.hidden = !v.notice;
     notice.textContent = v.notice || "";
-    panel.classList.toggle("is-failed", v.status === "failed");
-    const idx = STAGES.indexOf(v.status);
+    panel.classList.toggle("is-failed", failed);
+    panel.classList.toggle("is-cancelled", cancelled);
+    const at = failed ? v.failed_stage : v.status;
+    const idx = STAGES.indexOf(at);
     $$(".stages li", panel).forEach((li) => {
       const i = STAGES.indexOf(li.dataset.stage);
       // Boolean() matters: classList.toggle(name, undefined) flips the class instead of forcing it.
-      li.classList.toggle("is-done", Boolean((active && idx > -1 && i < idx) || (v.is_completed && i <= idx)));
-      li.classList.toggle("is-current", Boolean(i === idx && v.status !== "completed"));
+      li.classList.toggle("is-done", Boolean(idx > -1 && !cancelled && (v.is_completed ? i <= idx : i < idx)));
+      li.classList.toggle("is-current", Boolean(!failed && !cancelled && !v.is_completed && i === idx));
+      li.classList.toggle("is-failed", Boolean(failed && i === idx)); // shows where it stopped
     });
   }
 
@@ -254,11 +263,12 @@
       if (!job) return;
       const prev = job.v && job.v.status;
       job.v = v;
-      job.title = v.title;
+      if (v.title) job.title = v.title;
       emit(job);
       if (prev && prev !== v.status) {
         if (v.status === "completed") toast("Ready to save: " + v.title);
         if (v.status === "failed") toast(v.error_message || "A download failed.", "error");
+        if (v.status === "cancelled") toast("Download cancelled.");
       }
       if (!v.is_active) stop(id);
     }
@@ -313,7 +323,20 @@
       [...jobs.keys()].filter((id) => !ids.has(id)).forEach((id) => { stop(id); jobs.delete(id); emit({ id, removed: true }); });
       restore();
     });
-    return { add, remove, on: (fn) => listeners.add(fn), all: () => [...jobs.values()], restore, get: (id) => jobs.get(id) };
+    const cancelUrl = (id) => "/api/quick/" + encodeURIComponent(id) + "/cancel/";
+    /** Ask the server to stop a running download; the final "Cancelled" state arrives over the live stream. */
+    async function cancel(id) {
+      const { ok, data } = await api(cancelUrl(id), { method: "POST", body: {} });
+      if (!ok) { toast((data && data.error) || "Couldn't cancel the download.", "error"); return false; }
+      if (data.discarded) remove(id); else if (data.video) apply(id, data.video);
+      return true;
+    }
+    /** Forget a finished/failed download here and on the server (deletes an unsaved file). */
+    function dismiss(id) {
+      api(cancelUrl(id), { method: "POST", body: {} });
+      remove(id);
+    }
+    return { add, remove, cancel, dismiss, on: (fn) => listeners.add(fn), all: () => [...jobs.values()], restore, get: (id) => jobs.get(id) };
   })();
 
   /* Save button logic shared by the tray and the download page. */
@@ -383,12 +406,28 @@
         err.textContent = v.error_message;
         el.append(err);
       }
+      if (v && v.is_active) {
+        const stopBtn = document.createElement("button");
+        stopBtn.type = "button";
+        stopBtn.className = "btn btn-ghost btn-sm";
+        stopBtn.innerHTML = '<i class="bi bi-x-circle"></i> ' + (v.cancelling ? "Cancelling…" : "Cancel");
+        stopBtn.disabled = !!v.cancelling;
+        stopBtn.setAttribute("aria-label", "Cancel download of " + (job.title || "this video"));
+        stopBtn.addEventListener("click", () => { stopBtn.disabled = true; tracker.cancel(job.id); });
+        actions.append(stopBtn);
+      }
       if (!v || !v.is_active) {
         const dismiss = document.createElement("button");
         dismiss.type = "button";
         dismiss.className = "btn btn-ghost btn-sm";
-        dismiss.textContent = "Dismiss";
-        dismiss.addEventListener("click", () => tracker.remove(job.id));
+        dismiss.textContent = v && v.is_completed ? "Discard" : "Dismiss";
+        dismiss.addEventListener("click", async () => {
+          if (v && v.is_completed) {
+            const yes = await confirmModal({ title: "Discard this download?", text: "It hasn't been saved to your device yet. The file will be deleted from the server.", okLabel: "Discard" });
+            if (!yes) return;
+          }
+          tracker.dismiss(job.id);
+        });
         actions.append(dismiss);
       }
       if (actions.children.length) el.append(actions);
@@ -421,22 +460,102 @@
     const errBox = $("#fetch-error"), skeleton = $("#skeleton"), preview = $("#preview");
     const job = $("#job"), startBtn = $("#start-btn");
     const saveBtn = $("#job-save"), saveLabel = $("span", saveBtn);
+    const live = $("#job-live"), cancelBtn = $("#job-cancel"), cancelLabel = $("span", cancelBtn);
     let current = null, jobId = null;
+
+    /* ---- access options: how this download identifies itself to YouTube (the visitor decides) ---- */
+    const access = $("#access"), accessAlert = $("#access-alert");
+    const cookiesInput = $("#access-cookies-file"), cookiesStatus = $("#access-cookies-status");
+    let cookiesText = ""; // held in memory only: never written to storage, sent with the next request only
+    const ACCESS_KEY = "rh-access";
+    const accessMode = () => (($('input[name="access"]:checked') || {}).value) || "auto";
+    function buildAuth() {
+      const mode = accessMode();
+      if (mode === "browser") return { mode, browser: $("#access-browser-select").value };
+      if (mode === "cookies") return { mode, cookies: cookiesText };
+      return undefined;
+    }
+    function syncAccessUI() {
+      const mode = accessMode();
+      const b = $("#access-browser"), c = $("#access-cookies");
+      if (b) b.hidden = mode !== "browser";
+      if (c) c.hidden = mode !== "cookies";
+      try { localStorage.setItem(ACCESS_KEY, JSON.stringify({ mode: mode === "cookies" ? "auto" : mode, browser: ($("#access-browser-select") || {}).value })); } catch (_) {}
+    }
+    /** Open the options panel and tell the visitor what happened. */
+    function needAccess(message) {
+      accessAlert.textContent = message || "YouTube asked this server to verify it isn't a robot. Choose an option below, then try again.";
+      accessAlert.hidden = false;
+      access.open = true;
+      access.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+    const isVerification = (code) => code === "bot_check" || code === "client_rejected";
+    function accessReady() { // a chosen cookies.txt must actually be loaded
+      if (accessMode() === "cookies" && !cookiesText) { access.open = true; showError("Choose your cookies.txt file first, or pick another option."); return false; }
+      return true;
+    }
+    $$('input[name="access"]').forEach((r) => r.addEventListener("change", syncAccessUI));
+    const browserSelect = $("#access-browser-select");
+    if (browserSelect) browserSelect.addEventListener("change", syncAccessUI);
+    if (cookiesInput) cookiesInput.addEventListener("change", async () => {
+      const f = cookiesInput.files[0];
+      cookiesText = "";
+      if (!f) { cookiesStatus.textContent = ""; return; }
+      if (f.size > 1024 * 1024) { cookiesStatus.textContent = "That file is too large to be a cookies.txt file."; return; }
+      cookiesText = await f.text();
+      cookiesStatus.textContent = "Ready: " + f.name + " (" + Math.max(1, Math.round(f.size / 1024)) + " KB). It is sent with your next request only.";
+    });
+    try { // remember the *kind* of access (never the cookies themselves)
+      const saved = JSON.parse(localStorage.getItem(ACCESS_KEY) || "null");
+      const radio = saved && $('input[name="access"][value="' + saved.mode + '"]');
+      if (radio && saved.mode !== "cookies") { radio.checked = true; if (browserSelect && saved.browser) browserSelect.value = saved.browser; }
+    } catch (_) {}
+    syncAccessUI();
+
+    /* ---- run it on my own computer ---- */
+    const cliPanel = $("#cli-panel");
+    async function loadCommand() {
+      const url = (current && current.video.url) || input.value.trim();
+      const out = $("#cli-command"), outLogin = $("#cli-command-login");
+      if (!url) { out.textContent = "Paste a YouTube URL above first."; outLogin.textContent = ""; return; }
+      const preset = ($('input[name="preset"]:checked') || {}).value || app.dataset.defaultPreset || "mp4_720";
+      const { ok, data } = await api(app.dataset.commandUrl, { method: "POST", body: { url, preset } });
+      out.textContent = ok ? data.command : data.error || "Couldn't build the command.";
+      outLogin.textContent = ok ? data.command_with_login : "";
+    }
+    $("#cli-show").addEventListener("click", () => {
+      cliPanel.hidden = !cliPanel.hidden;
+      $("#cli-show").setAttribute("aria-expanded", String(!cliPanel.hidden));
+      if (!cliPanel.hidden) loadCommand();
+    });
+    $("#format-list").addEventListener("change", () => { if (!cliPanel.hidden) loadCommand(); });
+    $$("[data-copy]").forEach((btn) => btn.addEventListener("click", async () => {
+      const text = $(btn.dataset.copy).textContent;
+      try { await navigator.clipboard.writeText(text); }
+      catch (_) { const r = document.createRange(); r.selectNodeContents($(btn.dataset.copy)); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); document.execCommand && document.execCommand("copy"); }
+      const old = btn.textContent; btn.textContent = "Copied"; setTimeout(() => (btn.textContent = old), 1500);
+    }));
 
     const showError = (msg) => { errBox.textContent = msg; errBox.hidden = !msg; };
 
     async function fetchMetadata(url) {
       showError("");
+      accessAlert.hidden = true;
+      if (!accessReady()) return;
       preview.hidden = true;
       job.hidden = true;
       skeleton.hidden = false;
       fetchBtn.disabled = true;
       fetchBtn.innerHTML = '<span class="spinner-border spinner-border-sm" aria-hidden="true"></span> Fetching…';
-      const { ok, data } = await api(app.dataset.metadataUrl, { method: "POST", body: { url } });
+      const { ok, data } = await api(app.dataset.metadataUrl, { method: "POST", body: { url, auth: buildAuth() } });
       skeleton.hidden = true;
       fetchBtn.disabled = false;
       fetchBtn.innerHTML = '<i class="bi bi-search"></i> Fetch video';
-      if (!ok) { showError(data.error || "Couldn't fetch that video."); return; }
+      if (!ok) {
+        showError(data.error || "Couldn't fetch that video.");
+        if (isVerification(data.code)) needAccess();
+        return;
+      }
       current = data;
       renderPreview(data);
     }
@@ -478,10 +597,16 @@
     async function startDownload() {
       const chosen = $('input[name="preset"]:checked');
       if (!chosen || !current) return;
+      if (!accessReady()) return;
+      accessAlert.hidden = true;
       startBtn.disabled = true;
-      const { ok, data } = await api(app.dataset.downloadUrl, { method: "POST", body: { url: current.video.url, preset: chosen.value } });
+      const { ok, data } = await api(app.dataset.downloadUrl, { method: "POST", body: { url: current.video.url, preset: chosen.value, auth: buildAuth() } });
       startBtn.disabled = false;
-      if (!ok) { toast(data.error || "Couldn't start the download.", "error"); return; }
+      if (!ok) {
+        toast(data.error || "Couldn't start the download.", "error");
+        if (isVerification(data.code)) needAccess();
+        return;
+      }
       preview.hidden = true;
       showJob(data.video);
       tracker.add(data.video);
@@ -496,6 +621,9 @@
       saveBtn.hidden = false;
       saveBtn.disabled = false;
       saveLabel.textContent = "Save to my device";
+      live.hidden = false;
+      cancelBtn.disabled = false;
+      cancelLabel.textContent = "Cancel download";
       $("#job-hint").hidden = true;
       const holder = $("#job-progress");
       holder.textContent = "";
@@ -509,21 +637,34 @@
       if (j.removed) { return; }
       const v = j.v;
       if (!v) return;
-      $("#job-title").textContent = v.title;
+      $("#job-title").textContent = v.title || (current && current.video.title) || "Preparing download…";
       renderProgress($("#job-progress"), v);
       const err = $("#job-error"), actions = $("#job-actions"), hint = $("#job-hint");
-      if (v.is_completed) {
+      live.hidden = !v.is_active;
+      cancelBtn.disabled = !!v.cancelling;
+      cancelLabel.textContent = v.cancelling ? "Cancelling…" : "Cancel download";
+      if (v.is_active) { actions.hidden = true; hint.hidden = true; err.hidden = true; }
+      if (v.status === "cancelled") {
+        hint.hidden = false;
+        hint.textContent = "Download cancelled. Nothing was kept on the server.";
+        actions.hidden = false;
+        saveBtn.hidden = true;
+      } else if (v.is_completed) {
         actions.hidden = false;
         saveBtn.hidden = false;
         hint.hidden = false;
         hint.textContent = (v.file_size_display ? v.file_size_display + " · " : "") + ("showSaveFilePicker" in window
-          ? "You'll choose where to save it. Reelhouse remembers the location in this browser so you can resume without choosing the file again. The server copy is deleted afterwards."
+          ? "You'll choose where to save it. Reelhauz remembers the location in this browser so you can resume without choosing the file again. The server copy is deleted afterwards."
           : "Your browser will save it to its download location (turn on “Ask where to save files” to choose a folder).");
       } else if (v.status === "failed") {
         err.textContent = v.error_message || "The download failed.";
         err.hidden = false;
         actions.hidden = false;
         saveBtn.hidden = true;
+        if (isVerification(v.error_code)) { // YouTube wants verification: let the visitor choose how to continue
+          if (current) preview.hidden = false; // keeps the chosen format, so Start download can simply be pressed again
+          needAccess("YouTube asked this server to verify it isn't a robot, so this download couldn't start. Pick an option below and press Start download again, or download on your own computer.");
+        }
       }
     });
     saveBtn.addEventListener("click", async () => {
@@ -532,6 +673,12 @@
         await handleSave(j, saveBtn, saveLabel);
         if (j.saved) { saveLabel.textContent = "Saved"; $("#job-hint").textContent = "Saved. The temporary server copy has been removed."; }
       }
+    });
+    cancelBtn.addEventListener("click", async () => {
+      if (!jobId) return;
+      cancelBtn.disabled = true;
+      cancelLabel.textContent = "Cancelling…";
+      if (!(await tracker.cancel(jobId))) { cancelBtn.disabled = false; cancelLabel.textContent = "Cancel download"; }
     });
     $("#job-again").addEventListener("click", () => {
       job.hidden = true; jobId = null;
@@ -652,7 +799,7 @@
       const openedKey = key;
       store.get(openedKey).then((s) => { if (key === openedKey) { saved = s; applyResume(); } })
         .finally(() => { if (key === openedKey) { lookupDone = true; flush(true); } }); // list it right away, even if closed quickly
-      document.title = title + " · Reelhouse";
+      document.title = title + " · Reelhauz";
       return true;
     }
 
@@ -742,7 +889,7 @@
     function handleOutcome(k, rec, res) {
       if (res === "ok") return;
       if (res === "missing") return reportMissing(k, rec);
-      showAlert("Reelhouse wasn't allowed to read “" + rec.name + "”. Choose the file instead.", [{ label: "Choose file…", primary: true, onClick: pickFile }]);
+      showAlert("Reelhauz wasn't allowed to read “" + rec.name + "”. Choose the file instead.", [{ label: "Choose file…", primary: true, onClick: pickFile }]);
     }
 
     const savedPanel = $("#saved-files"), savedList = $("#saved-list");
@@ -781,7 +928,7 @@
       }
       const res = await openFromRecord(wanted, rec, false);
       if (res === "prompt") { // the browser only needs one click to re-allow access; still no file picker
-        showAlert("Allow Reelhouse to reopen “" + rec.name + "”" + when + ".", [{
+        showAlert("Allow Reelhauz to reopen “" + rec.name + "”" + when + ".", [{
           label: "Continue watching", primary: true,
           onClick: async () => handleOutcome(wanted, rec, await openFromRecord(wanted, rec, true)),
         }]);

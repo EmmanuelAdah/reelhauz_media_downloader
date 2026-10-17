@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="csrf-token" content="{{ csrf_token }}">
-  <title>{% block title %}Reelhouse{% endblock %} · Reelhouse</title>
+  <title>{% block title %}Reelhauz{% endblock %} · Reelhauz</title>
   <script>
     (function () {
       try {
@@ -27,7 +27,7 @@
 <div class="app {% if user.is_authenticated %}app-auth{% else %}app-public{% endif %}">
   {% if user.is_authenticated %}
   <aside class="sidebar" id="sidebar" aria-label="Main navigation">
-    <a class="brand" href="{% url 'home' %}"><i class="bi bi-film"></i><span>Reelhouse</span></a>
+    <a class="brand" href="{% url 'home' %}"><i class="bi bi-film"></i><span>Reelhauz</span></a>
     <nav class="nav-list">
       <a href="{% url 'home' %}" class="{% if current == 'home' %}active{% endif %}"><i class="bi bi-cloud-arrow-down"></i>Download</a>
       <a href="{% url 'watch' %}" class="{% if current == 'watch' %}active{% endif %}"><i class="bi bi-play-btn"></i>Play a file</a>
@@ -46,7 +46,7 @@
       {% if user.is_authenticated %}
       <button class="icon-btn d-lg-none" id="sidebar-toggle" aria-label="Open menu" aria-controls="sidebar"><i class="bi bi-list"></i></button>
       {% else %}
-      <a class="brand" href="{% url 'home' %}"><i class="bi bi-film"></i><span>Reelhouse</span></a>
+      <a class="brand" href="{% url 'home' %}"><i class="bi bi-film"></i><span>Reelhauz</span></a>
       <nav class="top-nav" aria-label="Main navigation">
         <a href="{% url 'home' %}" class="{% if current == 'home' %}active{% endif %}">Download</a>
         <a href="{% url 'watch' %}" class="{% if current == 'watch' %}active{% endif %}">Play a file</a>

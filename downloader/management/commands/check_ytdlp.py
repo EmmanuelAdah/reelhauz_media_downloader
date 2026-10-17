@@ -39,7 +39,11 @@ class Command(BaseCommand):
             self.stdout.write(f"JavaScript runtime:    {ok} {name} {version} ({cfg['path']})")
         else:
             self.stdout.write(f"JavaScript runtime:    {bad}  -> install deno (https://deno.com) or node >= 20")
-        self.stdout.write(f"FFmpeg:                {ok if shutil.which('ffmpeg') else bad}")
+        ff = ytdlp_service.find_ffmpeg()
+        if ff:
+            self.stdout.write(f"FFmpeg:                {ok} {ff.source} ({ff.path})")
+        else:
+            self.stdout.write(f"FFmpeg:                {bad}  -> run `uv sync` (bundles one) or install FFmpeg, or set FFMPEG_LOCATION")
         cookies = settings.YTDLP_COOKIES_FILE
         self.stdout.write("Cookies file:          " + (f"{ok} {cookies}" if cookies and Path(cookies).is_file() else warn("not configured") + (f" (path {cookies} not found)" if cookies else "")))
         self.stdout.write("Proxy:                 " + (settings.YTDLP_PROXY.split("@")[-1] if settings.YTDLP_PROXY else "none"))

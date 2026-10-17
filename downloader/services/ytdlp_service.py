@@ -8,7 +8,9 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
+import shlex
 import shutil
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -47,6 +49,17 @@ class DownloaderError(Exception):
         self.code = code
         self.message = message
         self.hint = hint  # operator-facing advice: logged, never shown to visitors (except in DEBUG)
+
+
+ALLOWED_BROWSERS = ("firefox", "chrome", "chromium", "edge", "brave", "opera", "vivaldi", "safari")
+
+
+@dataclass(frozen=True)
+class YtAuth:
+    """Credentials a visitor chose for ONE request: a private cookies file or a local browser to read."""
+
+    cookiefile: Path | None = None
+    browser: str | None = None
 
 
 class DownloadCancelled(Exception):
@@ -149,8 +162,37 @@ def validate_url(url: str) -> UrlValidation:
 # --------------------------------------------------------------------------- #
 # Error translation
 # --------------------------------------------------------------------------- #
+@dataclass(frozen=True)
+class FfmpegInfo:
+    path: str
+    source: str  # "FFMPEG_LOCATION" | "system" | "bundled"
+
+
+def find_ffmpeg() -> FfmpegInfo | None:
+    """Locate FFmpeg: the FFMPEG_LOCATION setting, then the system PATH, then the copy bundled by `uv sync`."""
+    configured = (getattr(settings, "FFMPEG_LOCATION", "") or "").strip()
+    if configured:
+        path = Path(configured).expanduser()
+        exe = path / ("ffmpeg.exe" if os.name == "nt" else "ffmpeg") if path.is_dir() else path
+        if exe.is_file():
+            return FfmpegInfo(str(path), "FFMPEG_LOCATION")
+        logger.warning("FFMPEG_LOCATION=%s doesn't point to an FFmpeg binary; looking elsewhere", configured)
+    system = shutil.which("ffmpeg")
+    if system:
+        return FfmpegInfo(system, "system")
+    try:
+        import imageio_ffmpeg
+
+        bundled = imageio_ffmpeg.get_ffmpeg_exe()
+        if bundled and Path(bundled).is_file():
+            return FfmpegInfo(bundled, "bundled")
+    except Exception:  # package missing or no binary for this platform
+        logger.debug("No bundled FFmpeg available", exc_info=True)
+    return None
+
+
 def ffmpeg_available() -> bool:
-    return shutil.which("ffmpeg") is not None
+    return find_ffmpeg() is not None
 
 
 def _translate_exception(exc: BaseException) -> DownloaderError:
@@ -173,6 +215,12 @@ def _translate_exception(exc: BaseException) -> DownloaderError:
             "YouTube is blocking downloads from this server right now. Please try again later.",
             "YouTube bot check on this server's IP. " + cookie_hint,
         ),
+        (
+            ("page needs to be reloaded", "video player configuration error"),
+            "client_rejected",
+            "YouTube refused this request. Please try again in a moment.",
+            "YouTube rejected this client set (\"The page needs to be reloaded\"). The app tries other clients automatically.",
+        ),
         (("members-only", "members only", "join this channel"), "members_only", "This video is only available to channel members.", ""),
         (
             ("video unavailable", "this video is not available", "has been removed", "account associated with this video has been terminated", "no longer available"),
@@ -183,7 +231,8 @@ def _translate_exception(exc: BaseException) -> DownloaderError:
         (("live event will begin", "premieres in", "is live"), "live", "Live streams and upcoming premieres can't be downloaded yet.", ""),
         (("requested format is not available", "requested format not available"), "format_unavailable", "That quality isn't available for this video. Pick a different format.",
          "Often means the JavaScript challenge solver is missing: install yt-dlp[default] and a JS runtime (deno or node >= 20). " + cookie_hint),
-        (("ffmpeg", "ffprobe", "postprocessing"), "ffmpeg", "Media processing failed. Make sure FFmpeg is installed on the server.", ""),
+        (("ffmpeg", "ffprobe", "postprocessing"), "ffmpeg", "Media processing failed. Please try again.",
+         "FFmpeg failed while processing the media. Run `uv run python manage.py check_ytdlp` to see which FFmpeg is in use."),
         (
             ("cookies database", "cookie database", "failed to decrypt", "keyring"),
             "cookies",
@@ -254,7 +303,10 @@ def _strategies() -> list[list[str] | None]:
     if pinned:
         return [pinned]  # operator chose the clients: no automatic fallback
     order = list(CANONICAL_STRATEGIES)
-    preferred = cache.get(STRATEGY_CACHE_KEY)
+    try:
+        preferred = cache.get(STRATEGY_CACHE_KEY)
+    except Exception:  # a cache outage must never break a download
+        preferred = None
     if isinstance(preferred, int) and 0 < preferred < len(order):
         order.insert(0, order.pop(preferred))  # start with whatever worked last time
     return order
@@ -271,27 +323,46 @@ def _apply_strategy(opts: dict[str, Any], strategy: list[str] | None) -> dict[st
 
 
 def _remember(strategy: list[str] | None) -> None:
-    if strategy in CANONICAL_STRATEGIES:
-        idx = CANONICAL_STRATEGIES.index(strategy)
+    if strategy not in CANONICAL_STRATEGIES:
+        return
+    idx = CANONICAL_STRATEGIES.index(strategy)
+    try:
         if idx == 0:
             cache.delete(STRATEGY_CACHE_KEY)
         else:
             cache.set(STRATEGY_CACHE_KEY, idx, STRATEGY_CACHE_SECONDS)
+    except Exception:
+        logger.debug("Could not remember the working YouTube client", exc_info=True)
+
+
+RETRY_CODES = {"bot_check", "client_rejected"}  # client-specific refusals: another client set may be accepted
+AFTER_BOT_CHECK_CODES = {"unknown", "format_unavailable"}  # once YouTube is challenging us, these are usually client-specific too
 
 
 def _run_with_fallbacks(attempt):
-    """Call ``attempt(strategy)``; if YouTube answers with a bot check, retry with other client sets."""
+    """Call ``attempt(strategy)``; if YouTube refuses a client set, retry with the next one.
+
+    If every set fails, the first bot check (the root cause) is reported rather than a vaguer
+    follow-on error from a fallback client.
+    """
     strategies = _strategies()
+    first_bot: DownloaderError | None = None
     for n, strategy in enumerate(strategies):
+        last = n == len(strategies) - 1
         try:
             result = attempt(strategy)
         except DownloadCancelled:
             raise
         except Exception as exc:  # yt_dlp raises several unrelated exception types
             err = _translate_exception(exc)
-            if err.code == "bot_check" and n < len(strategies) - 1:
-                logger.warning("Bot check with %s; retrying with %s", _label(strategy), _label(strategies[n + 1]))
+            if err.code == "bot_check" and first_bot is None:
+                first_bot = err
+            retryable = err.code in RETRY_CODES or (first_bot is not None and err.code in AFTER_BOT_CHECK_CODES)
+            if retryable and not last:
+                logger.warning("%s failed with %s [%s]; trying %s", _label(strategy), err.code, err.message[:60], _label(strategies[n + 1]))
                 continue
+            if first_bot is not None and err.code in (RETRY_CODES | AFTER_BOT_CHECK_CODES):
+                raise first_bot from exc
             raise err from exc
         if len(strategies) > 1:
             if n > 0:
@@ -322,7 +393,7 @@ def diagnose(url: str) -> list[dict[str, Any]]:
     return results
 
 
-def _base_options() -> dict[str, Any]:
+def _base_options(auth: YtAuth | None = None) -> dict[str, Any]:
     opts: dict[str, Any] = {
         "quiet": True,
         "no_warnings": True,
@@ -335,7 +406,11 @@ def _base_options() -> dict[str, Any]:
         "logger": _YtdlpLogger(),
     }
     cookies = getattr(settings, "YTDLP_COOKIES_FILE", "")
-    if cookies and Path(cookies).is_file():
+    if auth and auth.cookiefile:  # what the visitor chose for this request wins over server-wide settings
+        opts["cookiefile"] = str(auth.cookiefile)
+    elif auth and auth.browser in ALLOWED_BROWSERS:
+        opts["cookiesfrombrowser"] = (auth.browser, None, None, None)
+    elif cookies and Path(cookies).is_file():
         opts["cookiefile"] = cookies
     elif getattr(settings, "YTDLP_COOKIES_FROM_BROWSER", "").strip():
         name, _, profile = settings.YTDLP_COOKIES_FROM_BROWSER.strip().partition(":")
@@ -343,6 +418,9 @@ def _base_options() -> dict[str, Any]:
     proxy = getattr(settings, "YTDLP_PROXY", "")
     if proxy:
         opts["proxy"] = proxy
+    ffmpeg = find_ffmpeg()
+    if ffmpeg and ffmpeg.source != "system":
+        opts["ffmpeg_location"] = ffmpeg.path  # configured or bundled copy; a system FFmpeg is found by yt-dlp itself
     runtime = detect_js_runtime()
     if runtime:
         opts["js_runtimes"] = runtime  # YouTube needs an external JS runtime to solve its challenges
@@ -374,7 +452,7 @@ def _simplify_formats(raw_formats: list[dict[str, Any]] | None) -> list[dict[str
     return out
 
 
-def extract_video_info(url: str) -> VideoInfo:
+def extract_video_info(url: str, auth: YtAuth | None = None) -> VideoInfo:
     """Fetch metadata only. Nothing is downloaded."""
     check = validate_url(url)
     if not check.valid:
@@ -382,7 +460,7 @@ def extract_video_info(url: str) -> VideoInfo:
     def attempt(strategy):
         import yt_dlp
 
-        with yt_dlp.YoutubeDL(_apply_strategy({**_base_options(), "skip_download": True}, strategy)) as ydl:
+        with yt_dlp.YoutubeDL(_apply_strategy({**_base_options(auth), "skip_download": True}, strategy)) as ydl:
             return ydl.extract_info(check.normalized_url, download=False)
 
     info = _run_with_fallbacks(attempt)
@@ -468,6 +546,7 @@ def download_video(
     filename_stem: str,
     progress_callback: ProgressCallback | None = None,
     max_filesize: int | None = None,
+    auth: YtAuth | None = None,
 ) -> DownloadResult:
     """Download ``url`` using a preset into ``output_dir`` and return the file.
 
@@ -480,7 +559,11 @@ def download_video(
     if preset is None:
         raise DownloaderError("invalid_format", "That download format isn't available.")
     if not ffmpeg_available():
-        raise DownloaderError("ffmpeg", "FFmpeg is not installed on the server, so media can't be processed.")
+        hint = ("Run `uv sync` (installs a bundled FFmpeg), or install FFmpeg yourself: `sudo apt install ffmpeg`, "
+                "`brew install ffmpeg` or `winget install Gyan.FFmpeg`, or set FFMPEG_LOCATION in .env.")
+        logger.error("FFmpeg not found. %s", hint)
+        message = "The media tool FFmpeg couldn't be found, so this download can't be processed."
+        raise DownloaderError("ffmpeg", f"{message} [{hint}]" if settings.DEBUG else message, hint)
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", filename_stem):
         raise DownloaderError("invalid_filename", "Internal error: unsafe file name.")
 
@@ -520,7 +603,7 @@ def download_video(
             progress_callback(ProgressUpdate(phase="processing"))
 
     opts: dict[str, Any] = {
-        **_base_options(),
+        **_base_options(auth),
         "format": preset.selector,
         "paths": {"home": str(output_dir)},
         "outtmpl": f"{filename_stem}.%(ext)s",
@@ -580,3 +663,25 @@ def _locate_output(info: dict[str, Any] | None, output_dir: Path, stem: str) -> 
         ):
             return resolved
     return None
+
+
+def build_cli_command(url: str, preset_key: str) -> dict[str, str]:
+    """A yt-dlp command the visitor can run on their own computer (their IP, their browser login)."""
+    check = validate_url(url)
+    if not check.valid:
+        raise DownloaderError("invalid_url", check.error)
+    preset = PRESETS.get(preset_key)
+    if preset is None:
+        raise DownloaderError("invalid_format", "That download format isn't available.")
+    parts = ["yt-dlp", "--no-playlist", "--windows-filenames", "-f", preset.selector]
+    if preset.audio_only:
+        parts += ["-x", "--audio-format", preset.audio_codec or "mp3", "--audio-quality", "192K"]
+    else:
+        parts += ["--merge-output-format", "mp4"]
+    # Same "Title [videoid].ext" naming as the app, so the player can find your place again.
+    parts += ["-o", "%(title).80s [%(id)s].%(ext)s", check.normalized_url]
+    quote = lambda items: " ".join(shlex.quote(p) for p in items)  # noqa: E731
+    return {
+        "command": quote(parts),
+        "command_with_login": quote(parts[:1] + ["--cookies-from-browser", "firefox"] + parts[1:]),
+    }
