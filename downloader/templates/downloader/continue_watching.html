@@ -4,7 +4,7 @@
 <div id="cw-app" data-authenticated="{{ authenticated|yesno:'true,false' }}">
   <header class="page-head">
     <h1>Continue watching</h1>
-    <p>Everything you've played, with where you stopped. Resume reopens the file from where it's stored on this device (Chrome, Edge, Brave); other browsers ask you to locate it once.
+    <p>Track your watch history and pick up right where you left off. Clicking Resume reopens the original file directly from your device.
       {% if not authenticated %}Saved in this browser only. <a href="{% url 'register' %}">Create an account</a> to keep it across devices.{% endif %}</p>
   </header>
 
