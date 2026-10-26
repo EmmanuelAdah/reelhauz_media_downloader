@@ -6,7 +6,7 @@
   <section class="auth-card">
     <a class="brand brand-lg" href="{% url 'home' %}"><i class="bi bi-film"></i><span>Reelhauz</span></a>
     <h1>Create your account</h1>
-    <p class="text-body-secondary">An account only remembers where you stopped watching. No videos are stored.</p>
+    <p class="text-body-secondary">Keep track of every stream.</p>
     <form method="post" novalidate>{% csrf_token %}
       {% for field in form %}
       <div class="mb-3">

@@ -18,15 +18,15 @@ x-app: &app
 
 services:
   db:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     environment:
-      POSTGRES_DB: video_downloader
-      POSTGRES_USER: video_user
-      POSTGRES_PASSWORD: video_pass
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
     volumes:
       - pg_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U video_user -d video_downloader"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_NAME} -d ${DB_PASSWORD}"]
       interval: 5s
       timeout: 5s
       retries: 10

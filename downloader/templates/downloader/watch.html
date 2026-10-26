@@ -4,7 +4,7 @@
 <div id="watch-app" data-authenticated="{{ authenticated|yesno:'true,false' }}">
   <header class="page-head">
     <h1>Play a file</h1>
-    <p>Open a video or audio file from your device. The file never leaves your computer; Reelhauz only remembers where you stopped{% if not authenticated %}, in this browser{% endif %}, and (in Chrome, Edge and Brave) where the file is, so you can resume without choosing it again.</p>
+    <p>Open a video or audio file from your device.</p>
   </header>
 
   <div class="notice notice-dismissible" id="resume-hint" role="status" hidden>
@@ -19,7 +19,7 @@
   <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="Choose a video or audio file">
     <i class="bi bi-folder2-open"></i>
     <strong>Choose a file or drop it here</strong>
-    <span>Files saved by Reelhauz are named “Title [id].mp4”, which lets us find your place again.</span>
+    <span>Accessing files from your device gives you a seamless playback experience, letting you pick up right where you left off.</span>
     <input type="file" id="file-input" accept="video/*,audio/*,.mp4,.m4a,.mp3,.webm,.mkv" hidden>
   </div>
 
