@@ -906,7 +906,7 @@
         play.type = "button"; play.className = "btn btn-primary btn-sm"; play.innerHTML = '<i class="bi bi-play-fill"></i> Play';
         play.addEventListener("click", async () => handleOutcome(rec.key, rec, await openFromRecord(rec.key, rec, true)));
         const forget = document.createElement("button");
-        forget.type = "button"; forget.className = "btn btn-ghost btn-sm"; forget.textContent = "Forget location";
+        forget.type = "button"; forget.className = "btn btn-ghost btn-sm"; forget.textContent = "X";
         forget.setAttribute("aria-label", "Forget the location of " + rec.name);
         forget.addEventListener("click", async () => { await fileStore.remove(rec.key); toast("Forgot where “" + rec.name + "” is stored."); renderSaved(); });
         li.append(name, play, forget);
