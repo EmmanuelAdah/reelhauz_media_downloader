@@ -20,7 +20,7 @@ def json_body(request) -> dict:
 def error(message: str, status: int = 400, **extra) -> JsonResponse:
     return JsonResponse({"ok": False, "error": message, **extra}, status=status)
 
-
+# definition of custom decorator (@api_login_required)
 def api_login_required(view):
     @wraps(view)
     def wrapper(request, *args, **kwargs):

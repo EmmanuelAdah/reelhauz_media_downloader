@@ -21,6 +21,6 @@ def register(request):
         user = form.save()
         UserPreference.objects.get_or_create(user=user)
         login(request, user)
-        messages.success(request, "Account created. Your place in videos will now be remembered.")
+        messages.success(request, "Account created successfully.")
         return redirect("home")
     return render(request, "downloader/auth/register.html", {"form": form})
