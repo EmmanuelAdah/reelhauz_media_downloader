@@ -119,7 +119,7 @@ TEMPLATES = [
 DATABASES = {"default": database_from_url(os.environ.get("DATABASE_URL") or "sqlite:///db.sqlite3")}
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-REDIS_URL = os.environ.get("REDIS_URL", "")
+REDIS_URL = os.environ.get("REDIS_URL", "redis://redis:6379/0")
 if REDIS_URL and not TESTING:
     CACHES = {"default": {"BACKEND": "django.core.cache.backends.redis.RedisCache", "LOCATION": REDIS_URL}}
 else:
