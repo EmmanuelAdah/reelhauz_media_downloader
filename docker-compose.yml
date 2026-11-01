@@ -4,8 +4,8 @@ x-app: &app
   environment: &app-env
     DJANGO_DEBUG: "False"
     DJANGO_ALLOWED_HOSTS: "localhost,127.0.0.1"
-    DATABASE_URL: postgres://${DB_USER}:${DB_PASSWORD}:5432/${DB_NAME}
-    DOWNLOAD_BACKEND: celery   # production style: a dedicated worker container does the downloading
+    DATABASE_URL: postgres://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
+    DOWNLOAD_BACKEND: celery
     REDIS_URL: redis://redis:6379/0
     DOWNLOAD_TMP_DIR: /app/tmp_downloads
   volumes:
@@ -26,7 +26,7 @@ services:
     volumes:
       - pg_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_NAME} -d ${DB_PASSWORD}"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -49,7 +49,8 @@ services:
     <<: *app
     command: celery -A config worker --loglevel=info --concurrency=2
     depends_on:
-      - web
+      web:
+        condition: service_started
 
 volumes:
   pg_data:

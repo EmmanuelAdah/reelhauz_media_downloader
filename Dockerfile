@@ -16,6 +16,7 @@ COPY --from=denoland/deno:bin /deno /usr/local/bin/deno
 
 WORKDIR /app
 COPY pyproject.toml uv.lock .python-version ./
+
 RUN uv sync --frozen --no-dev
 
 COPY . .
@@ -23,6 +24,7 @@ RUN DJANGO_DEBUG=False DJANGO_SECRET_KEY=build-only python manage.py collectstat
     && useradd --create-home app \
     && mkdir -p /app/tmp_downloads \
     && chown -R app:app /app/tmp_downloads
+
 USER app
 
 EXPOSE 8000
