@@ -404,12 +404,6 @@ def _base_options(auth: YtAuth | None = None) -> dict[str, Any]:
         "fragment_retries": 3,
         "color": "never",
         "logger": _YtdlpLogger(),
-        # Configure player clients to bypass YouTube bot detection
-        "extractor_args": {
-            "youtube": {
-                "player_client": ["ios", "android", "web"],
-            }
-        },
     }
     cookies = getattr(settings, "YTDLP_COOKIES_FILE", "")
     if auth and auth.cookiefile:  # what the visitor chose for this request wins over server-wide settings
