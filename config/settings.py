@@ -187,7 +187,7 @@ MAX_COOKIES_FILE_KB = env_int("MAX_COOKIES_FILE_KB", 1024)
 # FFmpeg is needed to merge video+audio and convert to MP3/M4A. Lookup order: this setting (a binary or its folder),
 # FFmpeg on the system PATH, then the copy bundled with the project (installed by `uv sync`).
 FFMPEG_LOCATION = os.environ.get("FFMPEG_LOCATION", "")
-YTDLP_PROXY = os.environ.get("YTDLP_PROXY", "")  # e.g. http://user:pass@host:port; a residential/home IP avoids most bot checks
+YTDLP_PROXY = os.environ.get("YTDLP_PROXY", "socks5://warp:1080")  # e.g. http://user:pass@host:port; a residential/home IP avoids most bot checks
 YTDLP_JS_RUNTIME = os.environ.get("YTDLP_JS_RUNTIME", "")  # deno | node | bun | quickjs (auto-detected when empty)
 RATE_LIMIT_METADATA = (env_int("RATE_LIMIT_METADATA", 10), 60)  # per user (or IP when anonymous), per minute
 RATE_LIMIT_DOWNLOAD = (env_int("RATE_LIMIT_DOWNLOAD", 3), 60)
