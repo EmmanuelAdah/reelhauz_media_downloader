@@ -5,9 +5,13 @@ x-app: &app
     DJANGO_DEBUG: "False"
     DJANGO_ALLOWED_HOSTS: "localhost,127.0.0.1"
     DATABASE_URL: postgres://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
-    DOWNLOAD_BACKEND: celery
+    DOWNLOAD_BACKEND: celery   # production style: a dedicated worker container does the downloading
     REDIS_URL: redis://redis:6379/0
     DOWNLOAD_TMP_DIR: /app/tmp_downloads
+    # All yt-dlp traffic (metadata + media) leaves through the Cloudflare WARP sidecar below, because YouTube
+    # blocks most datacenter IPs. Override in .env (YTDLP_PROXY=http://user:pass@host:port for your own proxy,
+    # or set it to an empty value to go direct). Note: socks5h = DNS is resolved by the proxy as well.
+    YTDLP_PROXY: ${YTDLP_PROXY-socks5h://warp:1080}
   volumes:
     - tmp_data:/app/tmp_downloads
   depends_on:
@@ -15,10 +19,12 @@ x-app: &app
       condition: service_healthy
     redis:
       condition: service_healthy
+    warp:
+      condition: service_healthy
 
 services:
   db:
-    image: postgres:18-alpine
+    image: postgres:16-alpine
     environment:
       POSTGRES_DB: ${DB_NAME}
       POSTGRES_USER: ${DB_USER}
@@ -26,7 +32,7 @@ services:
     volumes:
       - pg_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
+      test: ["CMD-SHELL", "pg_isready -U video_user -d video_downloader"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -39,6 +45,30 @@ services:
       timeout: 5s
       retries: 10
 
+  # Cloudflare WARP as an outbound SOCKS5 proxy (warp:1080 inside the compose network, never published to the host).
+  # Registers a free WARP account on first start and keeps it in the warp_data volume so the identity survives restarts.
+  # Needs /dev/net/tun and NET_ADMIN (standard for VPN containers). Some PaaS hosts don't allow that: see README.
+  warp:
+    image: caomingjun/warp:latest
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    sysctls:
+      - net.ipv6.conf.all.disable_ipv6=0
+      - net.ipv4.conf.all.src_valid_mark=1
+    environment:
+      WARP_SLEEP: "2"
+    volumes:
+      - warp_data:/var/lib/cloudflare-warp
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS --max-time 8 https://www.cloudflare.com/cdn-cgi/trace | grep -Eq 'warp=(on|plus)'"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+
   web:
     <<: *app
     command: sh -c "python manage.py migrate --noinput && gunicorn config.wsgi:application --bind 0.0.0.0:8000 --worker-class gthread --workers 2 --threads 16 --timeout 120"
@@ -49,9 +79,9 @@ services:
     <<: *app
     command: celery -A config worker --loglevel=info --concurrency=2
     depends_on:
-      web:
-        condition: service_started
+      - web
 
 volumes:
   pg_data:
   tmp_data:
+  warp_data:
