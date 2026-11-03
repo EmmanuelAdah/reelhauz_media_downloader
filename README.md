@@ -115,7 +115,9 @@ old `media/` folder.
 cp .env.example .env
 docker compose up --build        # web (gunicorn, runs migrations) + db + redis + worker (production style: DOWNLOAD_BACKEND=celery)
 ```
-Open http://localhost:8000. Web and worker share the `tmp_data` volume (staging folder) and Redis (job state).
+Open http://localhost:8000. A `warp` container (Cloudflare WARP, a free VPN) runs beside them and `YTDLP_PROXY` points at it
+(`socks5h://warp:1080`), so YouTube sees a Cloudflare IP instead of your datacenter IP. See *Troubleshooting* below.
+Web and worker share the `tmp_data` volume (staging folder) and Redis (job state).
 The image installs FFmpeg and uses `uv sync --frozen`. Gunicorn runs with threads because each live-progress connection holds one.
 
 ## Troubleshooting
@@ -147,12 +149,31 @@ It prints each client set's result. If one works, you're done (the app uses it a
    while logged in to YouTube in that browser. yt-dlp reads the browser's cookies directly. Chrome must be closed on some
    systems; Firefox is the most reliable. YouTube can restrict accounts used for automated downloads, so a throwaway
    account is wise.
-2. **Change the IP.** A home connection (no VPN) usually works; cloud servers often don't. Or route through a residential
-   proxy: `YTDLP_PROXY=http://user:pass@host:port`.
+2. **Change the IP.** A home connection (no VPN) usually works; cloud servers often don't. With Docker Compose this is
+   already done for you: the `warp` service routes yt-dlp through Cloudflare WARP (see below). Or use your own
+   (residential) proxy: `YTDLP_PROXY=http://user:pass@host:port`.
 3. **Cookies file:** export `youtube.com` cookies (Netscape format) and set `YTDLP_COOKIES_FILE=/path/to/cookies.txt`
    (needed on servers where there's no browser). Never commit this file.
 4. **Advanced:** `uv add bgutil-ytdlp-pot-provider` and run its provider server; yt-dlp discovers it automatically.
 5. Keep yt-dlp current, YouTube changes weekly: `uv lock --upgrade-package yt-dlp && uv sync`.
+
+### Cloudflare WARP (production on a cloud server)
+`docker-compose.yml` includes a `warp` sidecar (`caomingjun/warp`) that exposes a SOCKS5 proxy on `warp:1080`, reachable
+only from the other containers. `web` and `worker` get `YTDLP_PROXY=socks5h://warp:1080` and wait until WARP is healthy.
+All yt-dlp traffic, both metadata and the media download, goes through it; the rest of the app (Postgres, Redis, your
+visitors) does not.
+```bash
+docker compose up -d --build
+docker compose ps                      # warp should say "healthy"
+docker compose exec warp curl -s https://www.cloudflare.com/cdn-cgi/trace | grep warp     # warp=on
+docker compose exec worker python manage.py check_ytdlp https://youtu.be/<id>             # shows Proxy: warp:1080
+```
+- Needs a host that allows `/dev/net/tun` and `NET_ADMIN` (any normal VPS or VM with Docker). Managed container platforms
+  (Render, Railway, Fly machines without extra config, Cloud Run, ...) usually don't: run the compose stack on a VPS instead.
+- Use your own proxy instead: set `YTDLP_PROXY` in `.env`. Go direct: `YTDLP_PROXY=` (empty).
+- WARP shares Cloudflare IPs, so it isn't a guarantee. If YouTube still challenges, combine it with a cookies file
+  (option 3 above) or let visitors supply one in the page.
+- If the `warp` container is unhealthy, `docker compose logs warp` shows the registration or tunnel error.
 
 ### "The media tool FFmpeg couldn't be found"
 FFmpeg merges video and audio and converts to MP3/M4A. The app looks for it in this order: `FFMPEG_LOCATION` (a binary or its
