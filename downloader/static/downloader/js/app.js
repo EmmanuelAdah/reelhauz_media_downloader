@@ -8,6 +8,47 @@
   const authed = document.body.dataset.authenticated === "true";
   const sync = "BroadcastChannel" in window ? new BroadcastChannel("rh-sync") : null;
 
+
+  const savedSection = document.getElementById('saved-files');
+  const savedList = document.getElementById('saved-list');
+
+  if (savedList && savedSection) {
+    const updateScrollIndicator = () => {
+      const clientH = savedList.clientHeight;
+      const scrollH = savedList.scrollHeight;
+      const maxScroll = scrollH - clientH;
+
+      // Hide indicator if items fit without scrolling
+      if (maxScroll <= 0) {
+        savedSection.style.setProperty('--track-opacity', '0');
+        return;
+      }
+      savedSection.style.setProperty('--track-opacity', '1');
+
+      // Calculate proportional thumb height (min 20px so it's always visible)
+      const rawThumbHeight = (clientH / scrollH) * clientH;
+      const thumbHeight = Math.max(20, Math.min(rawThumbHeight, clientH));
+
+      // Calculate thumb position along the available track
+      const maxTrackTravel = clientH - thumbHeight;
+      const scrollRatio = savedList.scrollTop / maxScroll;
+      const thumbTop = scrollRatio * maxTrackTravel;
+
+      savedSection.style.setProperty('--thumb-height', `${thumbHeight}px`);
+      savedSection.style.setProperty('--thumb-top', `${thumbTop}px`);
+    };
+
+    // Update on scroll
+    savedList.addEventListener('scroll', updateScrollIndicator, { passive: true });
+
+    // Update when items are added, removed, or resized
+    const resizeObserver = new ResizeObserver(updateScrollIndicator);
+    resizeObserver.observe(savedList);
+
+    // Initial calculation
+    updateScrollIndicator();
+  }
+
   function fmtTime(sec) {
     sec = Math.max(0, Math.floor(sec || 0));
     const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60), s = sec % 60;
