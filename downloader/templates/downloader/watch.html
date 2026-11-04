@@ -23,30 +23,30 @@
     <input type="file" id="file-input" accept="video/*,audio/*,.mp4,.m4a,.mp3,.webm,.mkv" hidden>
   </div>
 
-  <section class="saved-files" id="saved-files" hidden aria-labelledby="saved-title">
-    <h2 id="saved-title" class="h6">Files Reelhauz remembers on this device</h2>
-    <ul id="saved-list" class="saved-list"></ul>
-  </section>
+    <section id="player-section" hidden>
+      <div class="player-wrap"><video id="player" controls playsinline preload="metadata"></video></div>
+        <div class="player-tools">
+          <label class="tool">Speed
+            <select id="speed-select" class="form-select form-select-sm">
+              <option value="0.5">0.5×</option><option value="0.75">0.75×</option><option value="1" selected>1×</option>
+              <option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="2">2×</option>
+            </select>
+          </label>
+          <button class="btn btn-ghost btn-sm" id="pip-btn" type="button" hidden><i class="bi bi-pip"></i> Picture-in-picture</button>
+          <button class="btn btn-ghost btn-sm" id="fs-btn" type="button"><i class="bi bi-fullscreen"></i> Fullscreen</button>
+          <button class="btn btn-ghost btn-sm ms-auto" id="change-file" type="button">Choose another file</button>
+        </div>
+        <div class="notice notice-dismissible" id="resume-notice" role="status" hidden>
+          <span>Continuing from <strong id="resume-time"></strong>.
+            <button class="btn btn-link btn-sm p-0 ms-2" id="restart-btn" type="button">Start over</button></span>
+          <button type="button" class="btn-close" id="resume-close" aria-label="Dismiss this message"></button>
+      </div>
+      <h2 class="detail-title" id="media-title"></h2>
+    </section>
 
-  <section id="player-section" hidden>
-    <div class="player-wrap"><video id="player" controls playsinline preload="metadata"></video></div>
-    <div class="player-tools">
-      <label class="tool">Speed
-        <select id="speed-select" class="form-select form-select-sm">
-          <option value="0.5">0.5×</option><option value="0.75">0.75×</option><option value="1" selected>1×</option>
-          <option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="2">2×</option>
-        </select>
-      </label>
-      <button class="btn btn-ghost btn-sm" id="pip-btn" type="button" hidden><i class="bi bi-pip"></i> Picture-in-picture</button>
-      <button class="btn btn-ghost btn-sm" id="fs-btn" type="button"><i class="bi bi-fullscreen"></i> Fullscreen</button>
-      <button class="btn btn-ghost btn-sm ms-auto" id="change-file" type="button">Choose another file</button>
-    </div>
-    <div class="notice notice-dismissible" id="resume-notice" role="status" hidden>
-      <span>Continuing from <strong id="resume-time"></strong>.
-        <button class="btn btn-link btn-sm p-0 ms-2" id="restart-btn" type="button">Start over</button></span>
-      <button type="button" class="btn-close" id="resume-close" aria-label="Dismiss this message"></button>
-    </div>
-    <h2 class="detail-title" id="media-title"></h2>
-  </section>
+    <section class="saved-files" id="saved-files" hidden aria-labelledby="saved-title">
+        <h2 id="saved-title" class="h6">Files Reelhauz remembers on this device</h2>
+        <ul id="saved-list" class="saved-list"></ul>
+    </section>
 </div>
 {% endblock %}
