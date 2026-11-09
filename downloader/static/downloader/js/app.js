@@ -1401,6 +1401,7 @@
   });
 
   document.addEventListener("click", (event) => {
+    if (!initialContent) return;
     if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     const targetElement = event.target instanceof Element ? event.target : event.target.parentElement;
     const link = targetElement && targetElement.closest("a[href]");
