@@ -20,6 +20,6 @@ setup_test_environment()
 out = Path(__file__).parent / ".pages"
 out.mkdir(exist_ok=True)
 client = Client()
-for name, url in (("home", "/"), ("watch", "/watch/"), ("cw", "/continue-watching/")):
+for name, url in (("home", "/"), ("watch", "/watch/"), ("cw", "/continue-watching/"), ("login", "/accounts/login/")):
     (out / f"{name}.html").write_text(client.get(url, HTTP_HOST="localhost").content.decode())
 print("rendered pages to", out)

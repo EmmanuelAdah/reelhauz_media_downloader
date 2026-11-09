@@ -1,6 +1,6 @@
 // Local media remains mounted and playing while navigating between Reelhauz pages.
 globalThis.structuredClone = (x) => x;
-const { JSDOM } = require("jsdom");
+const { JSDOM, VirtualConsole } = require("jsdom");
 const { IDBFactory } = require("fake-indexeddb");
 const fs = require("fs");
 const path = require("path");
@@ -18,6 +18,29 @@ const page = (name) => fs.readFileSync(path.join(pagesDir, `${name}.html`), "utf
   .replace(/<link [^>]*>/g, "");
 
 async function main() {
+  const loginDom = new JSDOM(page("login"), {
+    runScripts: "outside-only",
+    url: "http://localhost/accounts/login/",
+    pretendToBeVisual: true,
+    virtualConsole: new VirtualConsole(),
+  });
+  const loginWindow = loginDom.window;
+  loginWindow.bootstrap = {
+    Toast: class { show() {} },
+    Modal: { getOrCreateInstance: () => ({ show() {}, hide() {} }) },
+  };
+  loginWindow.ResizeObserver = class { observe() {} };
+  loginWindow.requestAnimationFrame = (callback) => setTimeout(callback, 0);
+  loginWindow.EventSource = class { addEventListener() {} close() {} };
+  loginWindow.EventSource.CLOSED = 2;
+  loginWindow.fetch = async () => ({ ok: false });
+  loginWindow.eval(js);
+  const continueLink = loginWindow.document.querySelector('.auth-alt a[href="/"]');
+  const continueClick = new loginWindow.MouseEvent("click", { bubbles: true, cancelable: true, button: 0 });
+  continueLink.dispatchEvent(continueClick);
+  check("Continue on the standalone login page uses normal navigation", !continueClick.defaultPrevented);
+  loginDom.window.close();
+
   const dom = new JSDOM(page("watch"), { runScripts: "outside-only", url: "http://localhost/watch/", pretendToBeVisual: true });
   const w = dom.window;
   const fetches = [];
