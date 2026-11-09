@@ -52,6 +52,9 @@ class AuthTests(AppTestCase):
     def test_layout_differs_for_visitors_and_members(self):
         anon = self.client.get(reverse("home"))
         self.assertContains(anon, "Create account")
+        self.assertContains(anon, "Pick up right where you left off.")
+        self.assertContains(anon, "Your experience is our priority.")
+        self.assertContains(anon, "Don’t have an account yet?")
         self.assertNotContains(anon, 'id="sidebar"')
         self.login()
         member = self.client.get(reverse("home"))
