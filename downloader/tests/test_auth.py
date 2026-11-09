@@ -7,6 +7,11 @@ User = get_user_model()
 
 
 class AuthTests(AppTestCase):
+    def test_registration_hides_default_username_requirements(self):
+        response = self.client.get(reverse("register"))
+        self.assertNotContains(response, "150 characters or fewer")
+        self.assertNotContains(response, "Letters, digits and @/./+/-/_ only")
+
     def test_register_creates_user_and_logs_in(self):
         res = self.client.post(
             reverse("register"),
@@ -71,3 +76,60 @@ class AuthTests(AppTestCase):
         res = self.client.post(reverse("settings"), {"default_preset": "audio_mp3"})
         self.assertRedirects(res, reverse("settings"))
         self.assertEqual(self.client.get(reverse("home")).context["default_preset"], "audio_mp3")
+
+    def test_password_change_form_is_in_a_modal(self):
+        self.login()
+        response = self.client.get(reverse("settings"))
+        self.assertContains(response, 'data-bs-target="#password-modal"')
+        self.assertContains(response, 'id="password-modal"')
+        self.assertContains(response, 'name="old_password"')
+        self.assertContains(response, 'name="new_password1"')
+        self.assertContains(response, 'name="new_password2"')
+
+    def test_change_password_keeps_user_logged_in(self):
+        self.login()
+        response = self.client.post(
+            reverse("settings"),
+            {
+                "action": "change_password",
+                "old_password": self.password,
+                "new_password1": "A-different-long-pass-57",
+                "new_password2": "A-different-long-pass-57",
+            },
+        )
+        self.assertRedirects(response, reverse("settings"))
+        self.alice.refresh_from_db()
+        self.assertTrue(self.alice.check_password("A-different-long-pass-57"))
+        self.assertTrue(self.client.get(reverse("settings")).wsgi_request.user.is_authenticated)
+
+    def test_change_password_rejects_wrong_current_password(self):
+        self.login()
+        response = self.client.post(
+            reverse("settings"),
+            {
+                "action": "change_password",
+                "old_password": "not-the-current-password",
+                "new_password1": "A-different-long-pass-57",
+                "new_password2": "A-different-long-pass-57",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Your old password was entered incorrectly")
+        self.alice.refresh_from_db()
+        self.assertTrue(self.alice.check_password(self.password))
+
+    def test_change_password_rejects_mismatched_new_passwords(self):
+        self.login()
+        response = self.client.post(
+            reverse("settings"),
+            {
+                "action": "change_password",
+                "old_password": self.password,
+                "new_password1": "A-different-long-pass-57",
+                "new_password2": "A-different-long-pass-58",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "The two password fields didn’t match")
+        self.alice.refresh_from_db()
+        self.assertTrue(self.alice.check_password(self.password))

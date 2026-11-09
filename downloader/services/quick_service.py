@@ -33,11 +33,13 @@ logger = logging.getLogger(__name__)
 
 TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{43}$")  # secrets.token_urlsafe(32)
 ACTIVE = {"pending", "fetching", "downloading", "processing"}
+PAUSABLE = {"downloading"}
 STATUS_LABELS = {
     "pending": "Pending",
     "fetching": "Fetching",
     "downloading": "Downloading",
     "processing": "Processing",
+    "paused": "Paused",
     "completed": "Completed",
     "failed": "Failed",
     "cancelled": "Cancelled",
@@ -63,6 +65,10 @@ def _cancel_key(token: str) -> str:
     return f"transfer:{token}:cancel"
 
 
+def _pause_key(token: str) -> str:
+    return f"transfer:{token}:pause"
+
+
 def _cache_get(key: str, default: Any = None) -> Any:
     try:
         return cache.get(key, default)
@@ -71,11 +77,22 @@ def _cache_get(key: str, default: Any = None) -> Any:
         return default
 
 
-def _cache_set(key: str, value: Any, ttl: int) -> None:
+def _cache_set(key: str, value: Any, ttl: int) -> bool:
     try:
         cache.set(key, value, ttl)
+        return True
     except Exception:
         logger.warning("Cache write failed for %s", key.split(":")[0], exc_info=True)
+        return False
+
+
+def _cache_delete(key: str) -> bool:
+    try:
+        cache.delete(key)
+        return True
+    except Exception:
+        logger.warning("Cache delete failed for %s", key.split(":")[0], exc_info=True)
+        return False
 
 
 def cache_summary(info) -> None:
@@ -95,18 +112,23 @@ def get_state(token: str) -> dict[str, Any] | None:
 
 def public_state(token: str, state: dict[str, Any]) -> dict[str, Any]:
     """JSON for the browser. Never includes filesystem paths."""
-    status = state["status"]
+    stored_status = state["status"]
+    cancelling = stored_status in ACTIVE and bool(_cache_get(_cancel_key(token)))
+    paused = stored_status in PAUSABLE and bool(_cache_get(_pause_key(token))) and not cancelling
+    status = "paused" if paused else stored_status
     file_url = reverse("quick_file", args=[token]) if status == "completed" else ""
     waiting = status == "pending" and time.time() - state.get("created", time.time()) > 8
     return {
         "id": token,
         "title": state.get("title") or "",
-        "cancelling": status in ACTIVE and bool(_cache_get(_cancel_key(token))),
+        "cancelling": cancelling,
+        "is_paused": paused,
+        "paused_from": stored_status if paused else "",
         "failed_stage": state.get("failed_stage", ""),
         "error_code": state.get("error_code", ""),
         "status": status,
         "status_label": STATUS_LABELS.get(status, status.title()),
-        "is_active": status in ACTIVE,
+        "is_active": stored_status in ACTIVE,
         "is_completed": status == "completed",
         "percent": round(state.get("percent", 0.0), 1),
         "downloaded_bytes": state.get("downloaded_bytes", 0),
@@ -327,6 +349,13 @@ def _raise_if_cancelled(token: str) -> None:
         raise DownloadCancelled()
 
 
+def _wait_if_paused(token: str) -> None:
+    while _cache_get(_pause_key(token)):
+        _raise_if_cancelled(token)
+        time.sleep(0.2)
+    _raise_if_cancelled(token)
+
+
 class _Reporter:
     """Writes throttled progress to the cache and aborts the download when the user cancels."""
 
@@ -335,7 +364,7 @@ class _Reporter:
         self._last: float | None = None
 
     def __call__(self, update: ProgressUpdate) -> None:
-        _raise_if_cancelled(self.token)
+        _wait_if_paused(self.token)
         now = time.monotonic()
         phase_changed = (update.phase == "processing") != (self.state["status"] == "processing")
         first = self._last is None or self.state["status"] == "fetching"  # leave "Fetching" at the first tick
@@ -415,6 +444,7 @@ def run(token: str, url: str, preset_key: str) -> None:
             logger.exception("Unexpected download failure")
             _fail(token, state, workdir, "Something unexpected went wrong. Please try again.", "unknown")
     finally:
+        _cache_delete(_pause_key(token))
         if TOKEN_RE.match(token):
             (workdir / COOKIES_NAME).unlink(missing_ok=True)  # the visitor's cookies never outlive the job
         if not slot_already_released:
@@ -430,6 +460,7 @@ def _fail(token: str, state: dict[str, Any], workdir: Path, message: str, code: 
 
 def _cancelled(token: str, state: dict[str, Any], workdir: Path) -> None:
     shutil.rmtree(workdir, ignore_errors=True)  # includes yt-dlp's partial .part files
+    _cache_delete(_pause_key(token))
     state.update(status="cancelled", speed=0.0, eta=None)
     _put(token, state)
 
@@ -450,6 +481,30 @@ def request_cancel(token: str) -> dict[str, Any] | None:
         return {"video": public_state(token, state), "discarded": False}
     discard(token)  # completed but not yet saved, failed or cancelled: forget it and delete any file
     return {"video": None, "discarded": True}
+
+
+def request_pause(token: str) -> dict[str, Any] | None:
+    """Pause transfer at the next yt-dlp progress callback."""
+    state = get_state(token)
+    if state is None:
+        return None
+    if state.get("status") not in PAUSABLE:
+        return {"error": "This download can only be paused while downloading.", "status": 409}
+    if not _cache_set(_pause_key(token), 1, settings.TRANSFER_TTL_SECONDS):
+        return {"error": "The download could not be paused because its state is temporarily unavailable.", "status": 503}
+    return {"video": public_state(token, state)}
+
+
+def request_resume(token: str) -> dict[str, Any] | None:
+    """Resume a download paused at a progress callback."""
+    state = get_state(token)
+    if state is None:
+        return None
+    if state.get("status") not in PAUSABLE or not _cache_get(_pause_key(token)):
+        return {"error": "This download is not paused.", "status": 409}
+    if not _cache_delete(_pause_key(token)):
+        return {"error": "The download could not be resumed because its state is temporarily unavailable.", "status": 503}
+    return {"video": public_state(token, state)}
 
 
 # --------------------------------------------------------------------------- #

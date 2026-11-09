@@ -1,5 +1,6 @@
 """Thread backend (no separate worker), cancelling downloads, honest status reporting."""
 import json
+import threading
 import time
 from pathlib import Path
 from unittest import mock
@@ -33,6 +34,14 @@ class SyncThread:
 
 def cancel(token=TOKEN, client=None):
     return (client or Client()).post(reverse("api_quick_cancel", args=[token]), data="{}", content_type="application/json")
+
+
+def pause(token=TOKEN, client=None):
+    return (client or Client()).post(reverse("api_quick_pause", args=[token]), data="{}", content_type="application/json")
+
+
+def resume(token=TOKEN, client=None):
+    return (client or Client()).post(reverse("api_quick_resume", args=[token]), data="{}", content_type="application/json")
 
 
 def status(token=TOKEN):
@@ -245,3 +254,58 @@ class CancelTests(AppTestCase):
         res = Client().get(reverse("api_quick_events", args=[TOKEN]))
         chunks = list(res.streaming_content)                      # ends by itself: cancelled is terminal
         self.assertIn(b'"status":"cancelled"', b"".join(chunks))
+
+
+class PauseTests(AppTestCase):
+    def test_pause_and_resume_report_live_state(self):
+        quick_service._put(TOKEN, {"status": "downloading", "percent": 35, "created": time.time()})
+
+        paused = pause().json()["video"]
+        self.assertEqual(paused["status"], "paused")
+        self.assertTrue(paused["is_paused"])
+        self.assertTrue(paused["is_active"])
+        self.assertEqual(paused["paused_from"], "downloading")
+        self.assertEqual(quick_service.get_state(TOKEN)["status"], "downloading")
+
+        resumed = resume().json()["video"]
+        self.assertEqual(resumed["status"], "downloading")
+        self.assertFalse(resumed["is_paused"])
+        self.assertTrue(resumed["is_active"])
+
+    def test_progress_callback_waits_while_paused_and_continues_on_resume(self):
+        quick_service._put(TOKEN, {"status": "downloading", "percent": 10, "created": time.time()})
+        pause()
+        reporter = quick_service._Reporter(TOKEN, quick_service.get_state(TOKEN))
+        finished = threading.Event()
+
+        errors = []
+
+        def report():
+            try:
+                reporter(ProgressUpdate("downloading", 5, 10, 1.0, 1))
+            except Exception as exc:
+                errors.append(exc)
+            finally:
+                finished.set()
+
+        worker = threading.Thread(target=report, daemon=True)
+        worker.start()
+        self.assertFalse(finished.wait(0.1))
+
+        self.assertEqual(resume().status_code, 200)
+        self.assertTrue(finished.wait(1))
+        worker.join(timeout=1)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(errors, [])
+        self.assertEqual(quick_service.get_state(TOKEN)["percent"], 50.0)
+
+    def test_pause_only_applies_during_transfer_and_endpoints_are_post_only(self):
+        quick_service._put(TOKEN, {"status": "fetching", "created": time.time()})
+        self.assertEqual(pause().status_code, 409)
+        self.assertEqual(Client().get(reverse("api_quick_pause", args=[TOKEN])).status_code, 405)
+        self.assertEqual(Client().get(reverse("api_quick_resume", args=[TOKEN])).status_code, 405)
+        quick_service._put(TOKEN, {"status": "processing", "created": time.time()})
+        self.assertEqual(pause().status_code, 409)
+        quick_service._put(TOKEN, {"status": "downloading", "created": time.time()})
+        self.assertEqual(resume().status_code, 409)
+        self.assertEqual(pause("z" * 43).status_code, 404)

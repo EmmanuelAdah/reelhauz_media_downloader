@@ -6,12 +6,13 @@ import re
 
 from django.conf import settings
 from django.contrib import messages
+from django.contrib.auth import update_session_auth_hash
 from django.contrib.auth.decorators import login_required
 from django.http import JsonResponse
 from django.shortcuts import redirect, render
 from django.views.decorators.http import require_http_methods
 
-from downloader.forms import PreferenceForm
+from downloader.forms import PreferenceForm, StyledPasswordChangeForm
 from downloader.models import PlaybackPosition, UserPreference
 from downloader.throttle import rate_limit
 from downloader.views.common import api_login_required, error, json_body
@@ -30,15 +31,31 @@ def continue_watching(request):
 @login_required
 def settings_page(request):
     pref, _ = UserPreference.objects.get_or_create(user=request.user)
-    form = PreferenceForm(request.POST or None, instance=pref)
-    if request.method == "POST" and form.is_valid():
-        form.save()
-        messages.success(request, "Settings saved.")
-        return redirect("settings")
+    changing_password = request.method == "POST" and request.POST.get("action") == "change_password"
+    form = PreferenceForm(None if changing_password else request.POST or None, instance=pref)
+    password_form = StyledPasswordChangeForm(
+        request.user,
+        request.POST if changing_password else None,
+    )
+    if request.method == "POST":
+        if changing_password:
+            if password_form.is_valid():
+                user = password_form.save()
+                update_session_auth_hash(request, user)
+                messages.success(request, "Your password has been changed.")
+                return redirect("settings")
+        elif form.is_valid():
+            form.save()
+            messages.success(request, "Settings saved.")
+            return redirect("settings")
     return render(
         request,
         "downloader/settings.html",
-        {"form": form, "saved_count": PlaybackPosition.objects.filter(user=request.user).count()},
+        {
+            "form": form,
+            "password_form": password_form,
+            "saved_count": PlaybackPosition.objects.filter(user=request.user).count(),
+        },
     )
 
 
