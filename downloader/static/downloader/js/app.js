@@ -8,11 +8,68 @@
   const authed = document.body.dataset.authenticated === "true";
   const sync = "BroadcastChannel" in window ? new BroadcastChannel("rh-sync") : null;
 
+  let ticking = false;
+  let hideTimeout = null;
+  const FADE_DELAY_MS = 2000; // Time in milliseconds before disappearing
 
-  const savedSection = document.getElementById('saved-files');
-  const savedList = document.getElementById('saved-list');
+  const updatePageScrollIndicator = () => {
+    const docEl = document.documentElement;
+    const body = document.body;
 
-  if (savedList && savedSection) {
+    const windowH = window.innerHeight;
+    const scrollH = docEl.scrollHeight || body.scrollHeight;
+    const scrollTop = window.scrollY || docEl.scrollTop || 0;
+
+    const marginY = 32; // Matches top: 1rem + bottom: 1rem
+    const trackH = windowH - marginY;
+    const maxScroll = scrollH - windowH;
+
+    // Keep hidden if the page doesn't have enough content to scroll
+    if (maxScroll <= 0) {
+      body.style.setProperty('--page-track-opacity', '0');
+      ticking = false;
+      return;
+    }
+
+    // Calculate dimensions and position
+    const rawThumbHeight = (windowH / scrollH) * trackH;
+    const thumbHeight = Math.max(24, Math.min(rawThumbHeight, trackH));
+    const maxTrackTravel = trackH - thumbHeight;
+    const scrollRatio = Math.min(Math.max(scrollTop / maxScroll, 0), 1);
+    const thumbTop = scrollRatio * maxTrackTravel;
+
+    body.style.setProperty('--page-thumb-height', `${thumbHeight}px`);
+    body.style.setProperty('--page-thumb-top', `${thumbTop}px`);
+
+    // Reveal indicator while scrolling
+    body.style.setProperty('--page-track-opacity', '1');
+
+    // Reset inactivity timer to fade out after inactivity
+    clearTimeout(hideTimeout);
+    hideTimeout = setTimeout(() => {
+      body.style.setProperty('--page-track-opacity', '0');
+    }, FADE_DELAY_MS);
+
+    ticking = false;
+  };
+
+  const onScrollOrResize = () => {
+    if (!ticking) {
+      window.requestAnimationFrame(updatePageScrollIndicator);
+      ticking = true;
+    }
+  };
+
+  window.addEventListener('scroll', onScrollOrResize, { passive: true });
+  window.addEventListener('resize', onScrollOrResize);
+
+  const pageObserver = new ResizeObserver(onScrollOrResize);
+  pageObserver.observe(document.body);
+
+  function initSavedScrollIndicator(root) {
+    const savedSection = $("#saved-files", root);
+    const savedList = $("#saved-list", root);
+    if (!savedList || !savedSection) return;
     const updateScrollIndicator = () => {
       const clientH = savedList.clientHeight;
       const scrollH = savedList.scrollHeight;
@@ -45,7 +102,6 @@
     const resizeObserver = new ResizeObserver(updateScrollIndicator);
     resizeObserver.observe(savedList);
 
-    // Initial calculation
     updateScrollIndicator();
   }
 
@@ -128,9 +184,17 @@
     $$("#theme-toggle i").forEach((i) => (i.className = "bi " + (dark ? "bi-sun" : "bi-moon-stars")));
   }
   syncThemeIcon();
-  $$("#theme-toggle").forEach((b) => b.addEventListener("click", () =>
-    setTheme(document.documentElement.getAttribute("data-bs-theme") === "dark" ? "light" : "dark")));
-  $$("[data-theme-set]").forEach((b) => b.addEventListener("click", () => setTheme(b.dataset.themeSet)));
+  document.addEventListener("click", (event) => {
+    const target = event.target instanceof Element ? event.target : event.target.parentElement;
+    if (!target) return;
+    const themeButton = target.closest("#theme-toggle, [data-theme-set]");
+    if (!themeButton) return;
+    if (themeButton.id === "theme-toggle") {
+      setTheme(document.documentElement.getAttribute("data-bs-theme") === "dark" ? "light" : "dark");
+    } else if (themeButton.dataset.themeSet === "light" || themeButton.dataset.themeSet === "dark") {
+      setTheme(themeButton.dataset.themeSet);
+    }
+  });
   const sidebar = $("#sidebar"), backdrop = $("#sidebar-backdrop");
   function toggleSidebar(open) { if (sidebar) { sidebar.classList.toggle("open", open); backdrop.hidden = !open; } }
   const sbToggle = $("#sidebar-toggle");
@@ -146,7 +210,8 @@
     const pct = Math.round(v.percent || 0);
     const failed = v.status === "failed", cancelled = v.status === "cancelled";
     let label;
-    if (failed) label = "Failed" + (STAGE_LABEL[v.failed_stage] ? " while " + STAGE_LABEL[v.failed_stage].toLowerCase() : "");
+    if (v.is_paused) label = "Paused";
+    else if (failed) label = "Failed" + (STAGE_LABEL[v.failed_stage] ? " while " + STAGE_LABEL[v.failed_stage].toLowerCase() : "");
     else if (cancelled) label = "Cancelled";
     else if (v.cancelling) label = "Cancelling…";
     else label = v.status_label + (v.is_active ? "…" : "");
@@ -155,14 +220,14 @@
     $("[data-role=bar]", panel).style.width = pct + "%";
     $("[data-role=track]", panel).setAttribute("aria-valuenow", String(pct));
     $("[data-role=bytes]", panel).textContent = v.total_bytes ? v.downloaded_display + " / " + v.total_display : "";
-    $("[data-role=speed]", panel).textContent = v.is_active ? v.speed_display : "—";
-    $("[data-role=eta]", panel).textContent = v.is_active ? v.eta_display : "—";
+    $("[data-role=speed]", panel).textContent = v.is_active && !v.is_paused ? v.speed_display : "—";
+    $("[data-role=eta]", panel).textContent = v.is_active && !v.is_paused ? v.eta_display : "—";
     const notice = $("[data-role=notice]", panel);
     notice.hidden = !v.notice;
     notice.textContent = v.notice || "";
     panel.classList.toggle("is-failed", failed);
     panel.classList.toggle("is-cancelled", cancelled);
-    const at = failed ? v.failed_stage : v.status;
+    const at = failed ? v.failed_stage : (v.is_paused ? v.paused_from : v.status);
     const idx = STAGES.indexOf(at);
     $$(".stages li", panel).forEach((li) => {
       const i = STAGES.indexOf(li.dataset.stage);
@@ -288,7 +353,7 @@
 
     const readStore = () => { try { return JSON.parse(localStorage.getItem(JOBS_KEY) || "[]"); } catch (_) { return []; } };
     const persist = () => {
-      try { localStorage.setItem(JOBS_KEY, JSON.stringify([...jobs.values()].map((j) => ({ id: j.id, title: j.title, added: j.added })))); } catch (_) {}
+      try { localStorage.setItem(JOBS_KEY, JSON.stringify([...jobs.values()].map((j) => ({ id: j.id, title: j.title, added: j.added, saved: !!j.saved })))); } catch (_) {}
     };
     const emit = (job) => listeners.forEach((fn) => fn(job));
 
@@ -350,10 +415,22 @@
       stop(id);
       if (jobs.delete(id)) { persist(); emit({ id, removed: true }); }
     }
+    function markSaved(job) {
+      job.saved = true;
+      job.v = { ...job.v, status: "saved", status_label: "Saved", is_active: false, is_completed: false, is_paused: false };
+      persist();
+      emit(job);
+    }
     function restore() {
       const now = Date.now();
       readStore().filter((j) => now - j.added < JOB_MAX_AGE).forEach((j) => {
-        if (!jobs.has(j.id)) { jobs.set(j.id, { ...j, v: null }); subscribe(j.id); }
+        if (!jobs.has(j.id)) {
+          const savedJob = { ...j, v: j.saved
+            ? { id: j.id, title: j.title, status: "saved", status_label: "Saved", is_active: false, is_completed: false }
+            : null };
+          jobs.set(j.id, savedJob);
+          if (!j.saved) subscribe(j.id);
+        }
       });
       persist();
     }
@@ -362,6 +439,20 @@
       if (e.key !== JOBS_KEY) return;
       const ids = new Set(readStore().map((j) => j.id));
       [...jobs.keys()].filter((id) => !ids.has(id)).forEach((id) => { stop(id); jobs.delete(id); emit({ id, removed: true }); });
+      readStore().forEach((stored) => {
+        const job = jobs.get(stored.id);
+        if (job && !!job.saved !== !!stored.saved) {
+          job.saved = !!stored.saved;
+          if (job.saved) {
+            stop(job.id);
+            job.v = { ...job.v, status: "saved", status_label: "Saved", is_active: false, is_completed: false };
+          } else if (!job.v || job.v.status === "saved") {
+            job.v = null;
+            subscribe(job.id);
+          }
+          emit(job);
+        }
+      });
       restore();
     });
     const cancelUrl = (id) => "/api/quick/" + encodeURIComponent(id) + "/cancel/";
@@ -372,12 +463,20 @@
       if (data.discarded) remove(id); else if (data.video) apply(id, data.video);
       return true;
     }
+    /** Pause or resume a transfer without discarding its partial file. */
+    async function setPaused(id, paused) {
+      const action = paused ? "pause" : "resume";
+      const { ok, data } = await api("/api/quick/" + encodeURIComponent(id) + "/" + action + "/", { method: "POST", body: {} });
+      if (!ok) { toast((data && data.error) || "Couldn't " + action + " the download.", "error"); return false; }
+      if (data.video) apply(id, data.video);
+      return true;
+    }
     /** Forget a finished/failed download here and on the server (deletes an unsaved file). */
     function dismiss(id) {
       api(cancelUrl(id), { method: "POST", body: {} });
       remove(id);
     }
-    return { add, remove, cancel, dismiss, on: (fn) => listeners.add(fn), all: () => [...jobs.values()], restore, get: (id) => jobs.get(id) };
+    return { add, remove, cancel, setPaused, markSaved, dismiss, on: (fn) => listeners.add(fn), all: () => [...jobs.values()], restore, get: (id) => jobs.get(id) };
   })();
 
   /* Save button logic shared by the tray and the download page. */
@@ -388,10 +487,9 @@
     try {
       const r = await saveToDevice(job.v, (done, total) => setLabel(total ? "Saving " + Math.round((done / total) * 100) + "%" : "Saving…"));
       if (r.cancelled) { button.disabled = false; setLabel(original); return; }
-      job.saved = true;
+      tracker.markSaved(job);
       if (r.handle && job.v.video_id) await fileStore.put(job.v.video_id, r.handle, r.name); // so Continue watching can reopen it
       toast(r.viaBrowser ? "Your browser is saving the file." : "Saved as " + r.name);
-      setTimeout(() => tracker.remove(job.id), r.viaBrowser ? 2500 : 600);
     } catch (e) {
       toast((e && e.message) || "Couldn't save the file.", "error");
       button.disabled = false;
@@ -433,7 +531,14 @@
       }
       const actions = document.createElement("div");
       actions.className = "tray-actions";
-      if (v && v.is_completed) {
+      if (job.saved || (v && v.status === "saved")) {
+        const saved = document.createElement("button");
+        saved.type = "button";
+        saved.className = "btn btn-primary btn-sm";
+        saved.textContent = "Saved";
+        saved.disabled = true;
+        actions.append(saved);
+      } else if (v && v.is_completed) {
         const save = document.createElement("button");
         save.type = "button";
         save.className = "btn btn-primary btn-sm";
@@ -448,6 +553,18 @@
         el.append(err);
       }
       if (v && v.is_active) {
+        if (v.status === "downloading" || v.is_paused) {
+          const pauseBtn = document.createElement("button");
+          pauseBtn.type = "button";
+          pauseBtn.className = "btn btn-ghost btn-sm";
+          pauseBtn.textContent = v.is_paused ? "Resume" : "Pause";
+          pauseBtn.setAttribute("aria-label", (v.is_paused ? "Resume" : "Pause") + " download of " + (job.title || "this video"));
+          pauseBtn.addEventListener("click", async () => {
+            pauseBtn.disabled = true;
+            if (!(await tracker.setPaused(job.id, !v.is_paused))) pauseBtn.disabled = false;
+          });
+          actions.append(pauseBtn);
+        }
         const stopBtn = document.createElement("button");
         stopBtn.type = "button";
         stopBtn.className = "btn btn-ghost btn-sm";
@@ -461,9 +578,9 @@
         const dismiss = document.createElement("button");
         dismiss.type = "button";
         dismiss.className = "btn btn-ghost btn-sm";
-        dismiss.textContent = v && v.is_completed ? "Discard" : "Dismiss";
+        dismiss.textContent = v && v.is_completed && !job.saved ? "Discard" : "Dismiss";
         dismiss.addEventListener("click", async () => {
-          if (v && v.is_completed) {
+          if (v && v.is_completed && !job.saved) {
             const yes = await confirmModal({ title: "Discard this download?", text: "It hasn't been saved to your device yet. The file will be deleted from the server.", okLabel: "Discard" });
             if (!yes) return;
           }
@@ -502,6 +619,7 @@
     const job = $("#job"), startBtn = $("#start-btn");
     const saveBtn = $("#job-save"), saveLabel = $("span", saveBtn);
     const live = $("#job-live"), cancelBtn = $("#job-cancel"), cancelLabel = $("span", cancelBtn);
+    const pauseBtn = $("#job-pause"), pauseLabel = $("span", pauseBtn);
     let current = null, jobId = null;
 
     /* ---- access options: how this download identifies itself to YouTube (the visitor decides) ---- */
@@ -684,15 +802,26 @@
       live.hidden = !v.is_active;
       cancelBtn.disabled = !!v.cancelling;
       cancelLabel.textContent = v.cancelling ? "Cancelling…" : "Cancel download";
+      pauseBtn.hidden = !((v.status === "downloading" || v.is_paused) && v.is_active);
+      pauseBtn.disabled = !!v.cancelling;
+      pauseLabel.textContent = v.is_paused ? "Resume download" : "Pause download";
       if (v.is_active) { actions.hidden = true; hint.hidden = true; err.hidden = true; }
       if (v.status === "cancelled") {
         hint.hidden = false;
         hint.textContent = "Download cancelled. Nothing was kept on the server.";
         actions.hidden = false;
         saveBtn.hidden = true;
+      } else if (job.saved || v.status === "saved") {
+        actions.hidden = false;
+        saveBtn.hidden = false;
+        saveBtn.disabled = true;
+        saveLabel.textContent = "Saved";
+        hint.hidden = false;
+        hint.textContent = "Saved. The temporary server copy has been removed.";
       } else if (v.is_completed) {
         actions.hidden = false;
         saveBtn.hidden = false;
+        saveBtn.disabled = false;
         hint.hidden = false;
         hint.textContent = (v.file_size_display ? v.file_size_display + " · " : "") + ("showSaveFilePicker" in window
           ? "You'll choose where to save it. Reelhauz remembers the location in this browser so you can resume without choosing the file again. The server copy is deleted afterwards."
@@ -710,9 +839,8 @@
     });
     saveBtn.addEventListener("click", async () => {
       const j = tracker.get(jobId);
-      if (j && j.v && j.v.is_completed) {
+      if (j && j.v && (j.v.is_completed || j.saved)) {
         await handleSave(j, saveBtn, saveLabel);
-        if (j.saved) { saveLabel.textContent = "Saved"; $("#job-hint").textContent = "Saved. The temporary server copy has been removed."; }
       }
     });
     cancelBtn.addEventListener("click", async () => {
@@ -720,6 +848,13 @@
       cancelBtn.disabled = true;
       cancelLabel.textContent = "Cancelling…";
       if (!(await tracker.cancel(jobId))) { cancelBtn.disabled = false; cancelLabel.textContent = "Cancel download"; }
+    });
+    pauseBtn.addEventListener("click", async () => {
+      if (!jobId) return;
+      const job = tracker.get(jobId);
+      if (!job || !job.v) return;
+      pauseBtn.disabled = true;
+      if (!(await tracker.setPaused(jobId, !job.v.is_paused))) pauseBtn.disabled = false;
     });
     $("#job-again").addEventListener("click", () => {
       job.hidden = true; jobId = null;
@@ -796,9 +931,29 @@
 
   function initWatch(app) {
     const input = $("#file-input"), dz = $("#dropzone"), section = $("#player-section"), media = $("#player");
+    initSavedScrollIndicator(app);
     const alertBox = $("#file-alert"), alertText = $("#file-alert-text"), alertActions = $("#file-alert-actions");
     let key = null, title = "", objectUrl = null, saved = null, lastSent = -1, lastTick = 0;
+    const resumeNotice = $("#resume-notice");
+    let resumeNoticeTimer = null;
     let lookupDone = false; // never write a position before the saved one has been read (it would be clobbered)
+
+    function clearResumeNoticeTimer() {
+      if (resumeNoticeTimer) clearTimeout(resumeNoticeTimer);
+      resumeNoticeTimer = null;
+    }
+
+    function fadeResumeNotice() {
+      if (resumeNotice.hidden || resumeNoticeTimer) return;
+      resumeNoticeTimer = setTimeout(() => {
+        resumeNotice.classList.add("is-fading");
+        resumeNoticeTimer = setTimeout(() => {
+          resumeNotice.hidden = true;
+          resumeNotice.classList.remove("is-fading");
+          resumeNoticeTimer = null;
+        }, 400);
+      }, 2100);
+    }
 
     function showAlert(text, actions = []) {
       alertText.textContent = text;
@@ -830,7 +985,9 @@
       saved = null;
       lookupDone = false;
       clearAlert();
-      $("#resume-notice").hidden = true;
+      clearResumeNoticeTimer();
+      resumeNotice.hidden = true;
+      resumeNotice.classList.remove("is-fading");
       $("#resume-hint").hidden = true;
       $("#media-title").textContent = title;
       media.poster = /^[A-Za-z0-9_-]{11}$/.test(key) ? "https://i.ytimg.com/vi/" + key + "/hqdefault.jpg" : "";
@@ -850,7 +1007,9 @@
       if (pos > 5 && pos < media.duration - 5) {
         media.currentTime = pos;
         $("#resume-time").textContent = fmtTime(pos);
-        $("#resume-notice").hidden = false;
+        clearResumeNoticeTimer();
+        resumeNotice.classList.remove("is-fading");
+        resumeNotice.hidden = false;
       }
       saved = null;
     }
@@ -866,7 +1025,7 @@
       store.set(key, { position: pos, duration: Math.floor(media.duration), title }, keepalive).then(() => notifyPosition(key));
     }
     media.addEventListener("timeupdate", () => { const n = Date.now(); if (n - lastTick >= 8000) { lastTick = n; flush(false); } });
-    media.addEventListener("play", () => flush(true));
+    media.addEventListener("play", () => { fadeResumeNotice(); flush(true); });
     media.addEventListener("pause", () => flush(true));
     media.addEventListener("ended", () => flush(true));
     window.addEventListener("pagehide", () => flush(true, true));
@@ -1091,22 +1250,166 @@
     if (authed) setInterval(() => { if (!document.hidden) render(); }, 15000);
   }
 
-  /* ------------------------------------------------------------- settings */
-  const clearBtn = $("#clear-history");
-  if (clearBtn) clearBtn.addEventListener("click", async () => {
-    const yes = await confirmModal({ title: "Clear watch history?", text: "Saved positions and the remembered file locations in this browser will be removed. Your files are not affected.", okLabel: "Clear history" });
-    if (!yes) return;
-    await serverStore.clear();
-    await fileStore.clear();
-    toast("Watch history cleared.");
-    notifyPosition("*");
-    setTimeout(() => location.reload(), 600);
+  function initSettings(root) {
+    const clearBtn = $("#clear-history", root);
+    if (!clearBtn) return;
+    clearBtn.addEventListener("click", async () => {
+      const yes = await confirmModal({ title: "Clear watch history?", text: "Saved positions and the remembered file locations in this browser will be removed. Your files are not affected.", okLabel: "Clear history" });
+      if (!yes) return;
+      await store.clear();
+      await fileStore.clear();
+      clearBtn.disabled = true;
+      toast("Watch history cleared.");
+      notifyPosition("*");
+    });
+  }
+
+  function initPage(root) {
+    const watchApp = $("#watch-app", root);
+    if (watchApp) initWatch(watchApp);
+    const cwApp = $("#cw-app", root);
+    if (cwApp) initContinue(cwApp);
+    initSettings(root);
+  }
+
+  const PAGE_PATHS = new Set(["/", "/watch/", "/continue-watching/", "/settings/"]);
+  const pageKey = (url) => url.pathname + url.search;
+  const pages = new Map();
+  const initialContent = $(".content");
+  if (initialContent) {
+    pages.set(pageKey(new URL(location.href)), { content: initialContent, title: document.title, initialized: true });
+    initPage(initialContent);
+  }
+  const dock = $("#persistent-player");
+  const playerMount = $("#persistent-player-mount");
+  const playerReturn = $("#persistent-player-return");
+  const playerStop = $("#persistent-player-stop");
+  let navigationId = 0;
+
+  function setActiveNavigation(path) {
+    $$("#sidebar a, .top-nav a").forEach((link) => {
+      const selected = new URL(link.href, location.href).pathname === path;
+      link.classList.toggle("active", selected);
+      if (selected) link.setAttribute("aria-current", "page");
+      else link.removeAttribute("aria-current");
+    });
+  }
+
+  function stopPlayer() {
+    const section = playerMount && $("#player-section", playerMount);
+    const media = section && $("#player", section);
+    if (!media) return;
+    media.pause();
+    if (media.src && media.src.startsWith("blob:")) URL.revokeObjectURL(media.src);
+    media.removeAttribute("src");
+    media.load();
+    section.hidden = false;
+    section.classList.remove("is-docked");
+    playerMount.replaceChildren();
+    dock.hidden = true;
+  }
+
+  if (playerStop) playerStop.addEventListener("click", stopPlayer);
+
+  async function navigateTo(href, { addHistory = true } = {}) {
+    const target = new URL(href, location.href);
+    if (target.origin !== location.origin || !PAGE_PATHS.has(target.pathname)) return false;
+    if (addHistory && pageKey(target) === pageKey(new URL(location.href))) return true;
+
+    const id = ++navigationId;
+    const currentContent = $(".content");
+    const currentEntry = [...pages.entries()].find(([, page]) => page.content === currentContent);
+    const currentKey = currentEntry ? currentEntry[0] : pageKey(new URL(location.href));
+    if (currentContent && !pages.has(currentKey)) {
+      pages.set(currentKey, { content: currentContent, title: document.title });
+    }
+
+    const openingDifferentFile = target.pathname === "/watch/" && target.search && !pages.has(pageKey(target));
+    if (openingDifferentFile) {
+      [...pages.entries()].filter(([key]) => key.startsWith("/watch/")).forEach(([key, page]) => {
+        const section = $("#player-section", page.content);
+        const media = section && $("#player", section);
+        if (media && media.src) {
+          media.pause();
+          if (media.src.startsWith("blob:")) URL.revokeObjectURL(media.src);
+          media.removeAttribute("src");
+          media.load();
+        }
+        pages.delete(key);
+      });
+      playerMount.replaceChildren();
+      dock.hidden = true;
+    } else if (currentContent && $("#watch-app", currentContent)) {
+      const section = $("#player-section", currentContent);
+      const media = section && $("#player", section);
+      if (section && media && media.src) {
+        const placeholder = document.createElement("div");
+        placeholder.className = "player-placeholder";
+        placeholder.setAttribute("aria-hidden", "true");
+        section.replaceWith(placeholder);
+        section.classList.add("is-docked");
+        playerMount.replaceChildren(section);
+        dock.hidden = false;
+        const page = pages.get(currentKey);
+        if (page) Object.assign(page, { playerSection: section, playerPlaceholder: placeholder });
+      }
+    }
+
+    let page = pages.get(pageKey(target));
+    if (!page) {
+      try {
+        const response = await fetch(target.href, { credentials: "same-origin", headers: { Accept: "text/html" } });
+        if (id !== navigationId) return true;
+        if (response.redirected && new URL(response.url).origin === location.origin && !PAGE_PATHS.has(new URL(response.url).pathname)) {
+          location.assign(response.url);
+          return true;
+        }
+        if (!response.ok) throw new Error("Page request failed with status " + response.status);
+        const parsed = new DOMParser().parseFromString(await response.text(), "text/html");
+        const content = $(".content", parsed);
+        if (!content) throw new Error("The requested page did not contain the app content.");
+        page = { content, title: parsed.title, initialized: false };
+        pages.set(pageKey(target), page);
+      } catch (error) {
+        if (id === navigationId) location.assign(target.href);
+        return false;
+      }
+    }
+    if (id !== navigationId) return true;
+
+    if (page.playerSection && page.playerPlaceholder) {
+      page.playerPlaceholder.replaceWith(page.playerSection);
+      page.playerSection.classList.remove("is-docked");
+      dock.hidden = true;
+    }
+    const oldContent = $(".content");
+    if (oldContent && oldContent !== page.content) oldContent.replaceWith(page.content);
+    if (addHistory) history.pushState({}, "", target.href);
+    document.title = page.title;
+    setActiveNavigation(target.pathname);
+    if (!page.initialized) {
+      initPage(page.content);
+      page.initialized = true;
+    }
+    if (window.scrollTo) window.scrollTo({ top: 0, behavior: "auto" });
+    return true;
+  }
+
+  if (playerReturn) playerReturn.addEventListener("click", (event) => {
+    event.preventDefault();
+    navigateTo(playerReturn.href);
   });
 
-  /* ------------------------------------------- start the page-specific code */
-  // Kept at the very end so every const above is initialised before it runs.
-  const watchApp = $("#watch-app");
-  if (watchApp) initWatch(watchApp);
-  const cwApp = $("#cw-app");
-  if (cwApp) initContinue(cwApp);
+  document.addEventListener("click", (event) => {
+    if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    const targetElement = event.target instanceof Element ? event.target : event.target.parentElement;
+    const link = targetElement && targetElement.closest("a[href]");
+    if (!link || link.target || link.hasAttribute("download")) return;
+    const target = new URL(link.href, location.href);
+    if (target.origin !== location.origin || target.hash || !PAGE_PATHS.has(target.pathname)) return;
+    event.preventDefault();
+    navigateTo(target.href);
+  });
+
+  window.addEventListener("popstate", () => navigateTo(location.href, { addHistory: false }));
 })();

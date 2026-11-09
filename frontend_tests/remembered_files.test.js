@@ -104,6 +104,12 @@ const KEY = "dQw4w9WgXcQ", NAME = `Building REST APIs [${KEY}].mp4`;
     media.dispatchEvent(new p.w.Event("loadedmetadata")); await tick(30);
     check("opens automatically (permission already granted), no picker", !p.$("#player-section").hidden && picker.length === 0 && p.$("#media-title").textContent === "Building REST APIs");
     check("resumes at the saved position", Math.round(media.currentTime) === 754 && !p.$("#resume-notice").hidden);
+    media.dispatchEvent(new p.w.Event("play"));
+    check("resume reminder stays visible when playback starts", !p.$("#resume-notice").classList.contains("is-fading"));
+    await tick(2150);
+    check("resume reminder fades after about two seconds of playback", p.$("#resume-notice").classList.contains("is-fading") && !p.$("#resume-notice").hidden);
+    await tick(450);
+    check("resume reminder disappears after the fade completes", p.$("#resume-notice").hidden);
     p.$("#resume-close").click();
     check("'Continuing from…' notice can be closed with its × button", p.$("#resume-notice").hidden);
     check("Start over button still present in the notice markup", !!p.$("#restart-btn"));
@@ -180,6 +186,8 @@ const KEY = "dQw4w9WgXcQ", NAME = `Building REST APIs [${KEY}].mp4`;
     srcs[0].onmessage({ data: JSON.stringify(job) }); await tick(40);
     p.$("#job-save").click(); await tick(150);
     check("file streamed into the chosen destination", sent && written === 3);
+    check("download page save button changes to a disabled Saved state", p.$("#job-save").disabled && p.$("#job-save span").textContent === "Saved");
+    check("download page confirms the server copy was removed", /temporary server copy has been removed/.test(p.$("#job-hint").textContent));
     check("handle remembered under the video id for Continue watching", await idbHas(idb, KEY));
   }
 

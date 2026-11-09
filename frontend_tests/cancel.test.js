@@ -12,7 +12,7 @@ const check = (name, cond) => { console.log((cond ? "  ok   " : "  FAIL ") + nam
 
 const ID = "T".repeat(43);
 const base = { id: ID, title: "", is_active: true, is_completed: false, percent: 0, downloaded_bytes: 0, total_bytes: 0, downloaded_display: "—", total_display: "—",
-  speed_display: "—", eta_display: "—", notice: "", error_message: "", file_url: "", filename: "", file_size_display: "—", cancelling: false, failed_stage: "", video_id: "abcdefghijk" };
+  speed_display: "—", eta_display: "—", notice: "", error_message: "", file_url: "", filename: "", file_size_display: "—", cancelling: false, is_paused: false, paused_from: "", failed_stage: "", video_id: "abcdefghijk" };
 const st = (o) => ({ ...base, ...o });
 
 function boot({ cancelResponse } = {}) {
@@ -29,6 +29,8 @@ function boot({ cancelResponse } = {}) {
     if (url.includes("metadata")) return json({ ok: true, video: { url: "https://www.youtube.com/watch?v=abcdefghijk", title: "Building REST APIs", uploader: "Chan", duration_display: "18:42", upload_date: "", thumbnail_url: "" },
       formats: [{ key: "mp4_720", label: "MP4 720p", size_display: "40 MB", disabled: false }], default_preset: "mp4_720" });
     if (url.endsWith("/download/")) return json({ ok: true, video: st({ status: "pending", status_label: "Pending" }) }, 201);
+    if (url.endsWith("/pause/")) return json({ ok: true, video: st({ status: "paused", status_label: "Paused", is_paused: true, paused_from: "downloading" }) });
+    if (url.endsWith("/resume/")) return json({ ok: true, video: st({ status: "downloading", status_label: "Downloading" }) });
     if (url.includes("/cancel/")) return cancelResponse ? cancelResponse() : json({ ok: true, discarded: false, video: st({ status: "downloading", status_label: "Downloading", cancelling: true }) });
     return json({ ok: false }, 404);
   };
@@ -74,6 +76,28 @@ const stage = (p) => p.$("#job [data-role=stage]").textContent;
     check("error toast + button usable again", p.toasts.some((t) => /expired/.test(t)) && !p.$("#job-cancel").disabled && /Cancel download/.test(p.$("#job-cancel").textContent));
   }
 
+  console.log("PAUSE and RESUME on the download page and in the tray");
+  {
+    const p = boot(); await startJob(p);
+    check("pause control is hidden before transfer begins", p.$("#job-pause").hidden);
+    await push(p, { status: "downloading", status_label: "Downloading", percent: 35, title: "Building REST APIs" });
+    check("pause control appears during transfer", !p.$("#job-pause").hidden && /Pause download/.test(p.$("#job-pause").textContent));
+    p.$("#job-pause").click(); await tick(40);
+    check("page control posts to the pause endpoint and shows Paused", p.calls.some(([m, u]) => m === "POST" && u === `/api/quick/${ID}/pause/`) &&
+      /Resume download/.test(p.$("#job-pause").textContent) && stage(p) === "Paused");
+    check("paused progress keeps its transfer stage highlighted", p.$("#job .stages li.is-current").dataset.stage === "downloading");
+    p.$("#job-pause").click(); await tick(40);
+    check("page control posts to resume and restores Pause", p.calls.some(([m, u]) => m === "POST" && u === `/api/quick/${ID}/resume/`) &&
+      /Pause download/.test(p.$("#job-pause").textContent));
+
+    const trayButton = (text) => p.$$("#tray-list button").find((button) => button.textContent.trim() === text);
+    check("tray offers Pause for a running transfer", !!trayButton("Pause"));
+    trayButton("Pause").click(); await tick(40);
+    check("tray toggles to Resume when the server pauses", !!trayButton("Resume"));
+    trayButton("Resume").click(); await tick(40);
+    check("tray can resume the same transfer", !!trayButton("Pause"));
+  }
+
   console.log("FAILURE: shows where it stopped and keeps the video title");
   {
     const p = boot(); await startJob(p);
@@ -106,6 +130,19 @@ const stage = (p) => p.$("#job [data-role=stage]").textContent;
     check("Discard asks for confirmation first", /Discard this download/.test(p.$("#confirm-title").textContent) && p.calls.filter(([, u]) => u.includes("/cancel/")).length === 1);
     p.$("#confirm-ok").click(); await tick(60);
     check("after confirming: server told to delete the file, row removed", p.calls.filter(([, u]) => u.includes("/cancel/")).length === 2 && p.$$("#tray-list .tray-row").length === 0);
+  }
+  {
+    const p = boot(); await startJob(p);
+    await push(p, { status: "completed", status_label: "Completed", is_active: false, is_completed: true, percent: 100,
+      file_url: "/quick/x/file/", filename: "T [abcdefghijk].mp4" });
+    const save = p.$$("#tray-list button").find((button) => button.textContent.trim() === "Save to my device");
+    check("completed download can be saved from the Downloads tray", !!save);
+    save.click(); await tick(40);
+    const rowButtons = p.$$("#tray-list button").map((button) => button.textContent.trim());
+    const savedButton = p.$$("#tray-list button").find((button) => button.textContent.trim() === "Saved");
+    check("tray changes Save to my device into a disabled Saved state", !!savedButton && savedButton.disabled);
+    check("saved job is persisted and can be dismissed without offering Discard", JSON.parse(p.w.localStorage.getItem("rh-jobs"))[0].saved &&
+      rowButtons.includes("Dismiss") && !rowButtons.includes("Discard"));
   }
   console.log(failed ? `\n${failed} CHECK(S) FAILED` : "\nall cancel/status UI checks passed");
   process.exit(failed ? 1 : 0);

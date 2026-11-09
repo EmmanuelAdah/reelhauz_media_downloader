@@ -20,6 +20,8 @@ urlpatterns = [
     path("api/quick/<str:token>/status/", quick.quick_status, name="api_quick_status"),
     path("api/quick/<str:token>/events/", quick.quick_events, name="api_quick_events"),
     path("api/quick/<str:token>/cancel/", quick.quick_cancel, name="api_quick_cancel"),
+    path("api/quick/<str:token>/pause/", quick.quick_pause, name="api_quick_pause"),
+    path("api/quick/<str:token>/resume/", quick.quick_resume, name="api_quick_resume"),
     path("quick/<str:token>/file/", quick.quick_file, name="quick_file"),
     # Playback positions (accounts only; anonymous visitors use their browser's localStorage)
     path("api/playback/", playback.playback_list, name="api_playback_list"),

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from django import forms
 from django.contrib.auth import get_user_model
-from django.contrib.auth.forms import AuthenticationForm, UserCreationForm
+from django.contrib.auth.forms import AuthenticationForm, PasswordChangeForm, UserCreationForm
 
 from .models import UserPreference
 from .presets import PRESET_CHOICES
@@ -39,6 +39,16 @@ class RegisterForm(_Styled, UserCreationForm):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._style()
+        self.fields["username"].help_text = ""
+
+
+class StyledPasswordChangeForm(_Styled, PasswordChangeForm):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._style()
+        self.fields["old_password"].widget.attrs["autocomplete"] = "current-password"
+        self.fields["new_password1"].widget.attrs["autocomplete"] = "new-password"
+        self.fields["new_password2"].widget.attrs["autocomplete"] = "new-password"
 
 
 class VideoURLForm(forms.Form):

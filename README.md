@@ -30,6 +30,7 @@ No video is ever stored in the database or in Redis. Nothing is stored at all fo
 Browser ──POST /api/quick/download/──► job state (cache) ──► background thread* ──► yt-dlp + FFmpeg ──► temp folder
    ▲                                          │ every progress tick
    ├── live push: GET /api/quick/<token>/events/ (Server-Sent Events, polling fallback)
+   ├── POST /api/quick/<token>/pause/ and /resume/ ──► hold/release the transfer
    ├── POST /api/quick/<token>/cancel/ ──► stops the download and deletes the partial files
    └── GET /quick/<token>/file/ ──► streamed to the browser ──► server deletes file + state
    * or a Celery worker when DOWNLOAD_BACKEND=celery
@@ -40,6 +41,9 @@ Browser ──POST /api/quick/download/──► job state (cache) ──► bac
    (percent, bytes, speed, ETA). The lookup from step 1 is reused, so YouTube is asked once more rather than twice.
    *Fetching* lasts until the first bytes arrive. If a download fails, the stage that failed is highlighted
    ("Failed while fetching") together with the reason.
+   **Pause/Resume** is available during Downloading, from the job card or Downloads tray. Pause takes effect at the
+   next yt-dlp progress callback, retains partial files, and keeps the download slot reserved; canceling a paused job
+   still deletes its partial files. Processing cannot be paused.
    **Cancel download** is on the job card and in the Downloads tray for any running download. It stops yt-dlp within a
    moment, removes the partial files and frees the slot. With `DOWNLOAD_BACKEND=celery`, a missing worker is reported
    immediately, and a job no worker picks up fails after `QUEUE_TIMEOUT_SECONDS` instead of staying on "Pending".
@@ -59,7 +63,9 @@ Browser ──POST /api/quick/download/──► job state (cache) ──► bac
    Files are named `Title [videoid].mp4`.
 4. **Play a file** (`/watch/`) → the first time, open the file from your device (it plays locally and is never uploaded).
    The `[videoid]` in the name identifies the video, so your last position is restored ("Continuing from 12:34", with a
-   × to dismiss it). Positions are saved every few seconds, on pause and when you leave the page.
+   × to dismiss it). Positions are saved every few seconds, on pause and when you leave the page. Playback stays in a
+   small docked player while navigating between Reelhauz pages, and the *Open player* button returns it to the full player.
+   Browsers cannot keep a page-owned file playing after a full reload or navigation to another site.
 5. **Continue watching** lists everything you've played: unfinished videos under *Continue watching*, finished or just-opened ones under *Recently watched*. **Resume reopens the file with no file picker.** Browsers never reveal real file paths and a
    server session can't hold a reference to a file on your disk, so Reelhauz keeps the browser's own file handle
    (File System Access API, Chromium browsers) in IndexedDB. A handle is saved when you use the *Save to my device*
@@ -113,10 +119,14 @@ old `media/` folder.
 
 ```bash
 cp .env.example .env
-docker compose up --build        # web (gunicorn, runs migrations) + db + redis + worker (production style: DOWNLOAD_BACKEND=celery)
+docker compose up -d --build     # starts web, db, redis and the Celery worker; web runs migrations
+docker compose ps                # confirm web and worker are running
+docker compose logs -f web worker # inspect startup errors
 ```
-Open http://localhost:8000. A `warp` container (Cloudflare WARP, a free VPN) runs beside them and `YTDLP_PROXY` points at it
-(`socks5h://warp:1080`), so YouTube sees a Cloudflare IP instead of your datacenter IP. See *Troubleshooting* below.
+Open http://localhost:8000. This starts the Compose stack; deploying only the Dockerfile starts the web process, not
+the database, Redis, or Celery worker. On a server, install Docker Compose, configure `.env` (including a strong
+`DB_PASSWORD`, `DJANGO_SECRET_KEY`, and `DJANGO_ALLOWED_HOSTS`), then run the same command from the project directory.
+The optional `warp` container is not started by default so hosts without VPN/TUN support can run the app.
 Web and worker share the `tmp_data` volume (staging folder) and Redis (job state).
 The image installs FFmpeg and uses `uv sync --frozen`. Gunicorn runs with threads because each live-progress connection holds one.
 
@@ -149,8 +159,8 @@ It prints each client set's result. If one works, you're done (the app uses it a
    while logged in to YouTube in that browser. yt-dlp reads the browser's cookies directly. Chrome must be closed on some
    systems; Firefox is the most reliable. YouTube can restrict accounts used for automated downloads, so a throwaway
    account is wise.
-2. **Change the IP.** A home connection (no VPN) usually works; cloud servers often don't. With Docker Compose this is
-   already done for you: the `warp` service routes yt-dlp through Cloudflare WARP (see below). Or use your own
+2. **Change the IP.** A home connection (no VPN) usually works; cloud servers often don't. Docker Compose can route
+   yt-dlp through the optional `warp` service when the host supports VPN/TUN (see below). Or use your own
    (residential) proxy: `YTDLP_PROXY=http://user:pass@host:port`.
 3. **Cookies file:** export `youtube.com` cookies (Netscape format) and set `YTDLP_COOKIES_FILE=/path/to/cookies.txt`
    (needed on servers where there's no browser). Never commit this file.
@@ -158,12 +168,14 @@ It prints each client set's result. If one works, you're done (the app uses it a
 5. Keep yt-dlp current, YouTube changes weekly: `uv lock --upgrade-package yt-dlp && uv sync`.
 
 ### Cloudflare WARP (production on a cloud server)
-`docker-compose.yml` includes a `warp` sidecar (`caomingjun/warp`) that exposes a SOCKS5 proxy on `warp:1080`, reachable
-only from the other containers. `web` and `worker` get `YTDLP_PROXY=socks5h://warp:1080` and wait until WARP is healthy.
+`docker-compose.yml` includes an optional `warp` sidecar (`caomingjun/warp`) that exposes a SOCKS5 proxy on `warp:1080`, reachable
+only from the other containers. Enable it explicitly with:
+```bash
+YTDLP_PROXY=socks5h://warp:1080 docker compose --profile warp up -d --build
+```
 All yt-dlp traffic, both metadata and the media download, goes through it; the rest of the app (Postgres, Redis, your
 visitors) does not.
 ```bash
-docker compose up -d --build
 docker compose ps                      # warp should say "healthy"
 docker compose exec warp curl -s https://www.cloudflare.com/cdn-cgi/trace | grep warp     # warp=on
 docker compose exec worker python manage.py check_ytdlp https://youtu.be/<id>             # shows Proxy: warp:1080
@@ -190,8 +202,8 @@ See `.env.example` (every variable is documented there). Behind nginx/Caddy: set
 
 ```bash
 uv run python manage.py check_ytdlp [url]      # diagnose yt-dlp, JS runtime, FFmpeg, cookies, proxy, and a live extraction
-uv run python manage.py test downloader        # 135 tests; includes real yt-dlp + FFmpeg runs against a local server
-(cd frontend_tests && npm install && npm test) # UI checks: real pages + app.js in jsdom (live stages, cancel, remembered files, continue watching)
+uv run python manage.py test downloader        # includes real yt-dlp + FFmpeg runs against a local server
+(cd frontend_tests && npm install && npm test) # UI checks: real pages + app.js in jsdom (live stages, pause/resume, persistent playback, cancel, remembered files, continue watching)
 uv run python manage.py cleanup_transfers      # purge expired temp files now (also runs automatically)
 uv add <pkg> / uv remove <pkg>                 # manage dependencies
 uv lock --upgrade-package yt-dlp && uv sync    # YouTube changes often: keep yt-dlp current
@@ -217,5 +229,5 @@ downloader/
   templates/downloader/   base, home, watch, continue_watching, settings, auth/, components/
   static/downloader/      css/app.css  js/app.js
   tests/
-frontend_tests/    jsdom checks for the JavaScript (live status, cancel, remembered files, continue watching)
+frontend_tests/    jsdom checks for the JavaScript (live status, pause/resume, persistent playback, cancel, remembered files, continue watching)
 ```

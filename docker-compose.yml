@@ -4,41 +4,42 @@ x-app: &app
   environment: &app-env
     DJANGO_DEBUG: "False"
     DJANGO_ALLOWED_HOSTS: "localhost,127.0.0.1"
-    DATABASE_URL: postgres://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
+    DATABASE_URL: postgres://${DB_USER:-video_user}:${DB_PASSWORD:?Set DB_PASSWORD in .env}@db:5432/${DB_NAME:-video_downloader}
     DOWNLOAD_BACKEND: celery   # production style: a dedicated worker container does the downloading
     REDIS_URL: redis://redis:6379/0
     DOWNLOAD_TMP_DIR: /app/tmp_downloads
     # All yt-dlp traffic (metadata + media) leaves through the Cloudflare WARP sidecar below, because YouTube
     # blocks most datacenter IPs. Override in .env (YTDLP_PROXY=http://user:pass@host:port for your own proxy,
     # or set it to an empty value to go direct). Note: socks5h = DNS is resolved by the proxy as well.
-    YTDLP_PROXY: ${YTDLP_PROXY-socks5h://warp:1080}
+    YTDLP_PROXY: ${YTDLP_PROXY-}
   volumes:
     - tmp_data:/app/tmp_downloads
+  restart: unless-stopped
   depends_on:
     db:
       condition: service_healthy
     redis:
       condition: service_healthy
-    warp:
-      condition: service_healthy
 
 services:
   db:
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
-      POSTGRES_DB: ${DB_NAME}
-      POSTGRES_USER: ${DB_USER}
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME:-video_downloader}
+      POSTGRES_USER: ${DB_USER:-video_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
     volumes:
       - pg_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U video_user -d video_downloader"]
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
       interval: 5s
       timeout: 5s
       retries: 10
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -50,6 +51,7 @@ services:
   # Needs /dev/net/tun and NET_ADMIN (standard for VPN containers). Some PaaS hosts don't allow that: see README.
   warp:
     image: caomingjun/warp:latest
+    profiles: ["warp"]
     restart: unless-stopped
     cap_add:
       - NET_ADMIN
@@ -79,7 +81,10 @@ services:
     <<: *app
     command: celery -A config worker --loglevel=info --concurrency=2
     depends_on:
-      - web
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
 volumes:
   pg_data:

@@ -185,6 +185,30 @@ def quick_cancel(request, token: str):
     return response
 
 
+@require_POST
+def quick_pause(request, token: str):
+    result = quick_service.request_pause(token)
+    if result is None:
+        return error("This download has expired or doesn't exist.", 404)
+    if "error" in result:
+        return error(result["error"], result["status"])
+    response = JsonResponse({"ok": True, **result})
+    response["Cache-Control"] = "no-store"
+    return response
+
+
+@require_POST
+def quick_resume(request, token: str):
+    result = quick_service.request_resume(token)
+    if result is None:
+        return error("This download has expired or doesn't exist.", 404)
+    if "error" in result:
+        return error(result["error"], result["status"])
+    response = JsonResponse({"ok": True, **result})
+    response["Cache-Control"] = "no-store"
+    return response
+
+
 def _sse(data: dict | None = None, *, event: str | None = None) -> bytes:
     head = f"event: {event}\n" if event else ""
     return f"{head}data: {json.dumps(data or {}, separators=(',', ':'))}\n\n".encode()

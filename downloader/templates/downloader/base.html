@@ -76,15 +76,24 @@
     </header>
     <main class="content">{% block content %}{% endblock %}</main>
     {% if not user.is_authenticated %}
-    <footer class="public-foot">
-      Nothing is kept on the server except, for account holders, where you stopped watching.
-      <a href="{% url 'register' %}">Create an account</a> to resume videos on any device.
+    <footer class="public-foot" aria-label="Create an account">
+      <p class="public-foot-title">Pick up right where you left off.</p>
+      <p>Your experience is our priority.</p>
+      <p class="public-foot-cta">Don’t have an account yet? <a href="{% url 'register' %}">Create account</a> to sync your progress.</p>
     </footer>
     {% endif %}
   </div>
 </div>
 {% endwith %}
 {% endblock %}
+
+<aside class="persistent-player" id="persistent-player" aria-label="Media player" hidden>
+  <div class="persistent-player-head">
+    <a class="btn btn-ghost btn-sm" id="persistent-player-return" href="{% url 'watch' %}">Open player</a>
+    <button class="btn btn-ghost btn-sm" id="persistent-player-stop" type="button">Stop</button>
+  </div>
+  <div id="persistent-player-mount"></div>
+</aside>
 
 <div class="toast-container position-fixed bottom-0 end-0 p-3" id="toast-container" aria-live="polite"></div>
 {% for message in messages %}<div hidden data-toast="{{ message.tags }}">{{ message }}</div>{% endfor %}
