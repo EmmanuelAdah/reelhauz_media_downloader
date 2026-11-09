@@ -25,6 +25,36 @@
   <section class="panel">
     <h2 class="h5">Account</h2>
     <dl class="facts"><dt>Username</dt><dd>{{ user.get_username }}</dd>{% if user.email %}<dt>Email</dt><dd>{{ user.email }}</dd>{% endif %}</dl>
+    <button class="btn btn-ghost btn-sm" type="button" data-bs-toggle="modal" data-bs-target="#password-modal">Change password</button>
   </section>
 </div>
+
+<div class="modal fade" id="password-modal" tabindex="-1" aria-labelledby="password-modal-title" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <form method="post" novalidate>
+        {% csrf_token %}
+        <input type="hidden" name="action" value="change_password">
+        <div class="modal-header">
+          <h2 class="modal-title fs-5" id="password-modal-title">Change password</h2>
+          <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+        </div>
+        <div class="modal-body">
+          {% for field in password_form %}
+          <div class="mb-3">
+            <label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
+            {{ field }}
+            {% for error in field.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}
+          </div>
+          {% endfor %}
+          {% for error in password_form.non_field_errors %}<div class="text-danger small mb-3">{{ error }}</div>{% endfor %}
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-primary" type="submit">Save password</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
 {% endblock %}
+{% block extra_js %}{% if password_form.errors %}<script>bootstrap.Modal.getOrCreateInstance(document.getElementById("password-modal")).show();</script>{% endif %}{% endblock %}

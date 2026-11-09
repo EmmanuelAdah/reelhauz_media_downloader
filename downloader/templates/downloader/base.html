@@ -86,6 +86,14 @@
 {% endwith %}
 {% endblock %}
 
+<aside class="persistent-player" id="persistent-player" aria-label="Media player" hidden>
+  <div class="persistent-player-head">
+    <a class="btn btn-ghost btn-sm" id="persistent-player-return" href="{% url 'watch' %}">Open player</a>
+    <button class="btn btn-ghost btn-sm" id="persistent-player-stop" type="button">Stop</button>
+  </div>
+  <div id="persistent-player-mount"></div>
+</aside>
+
 <div class="toast-container position-fixed bottom-0 end-0 p-3" id="toast-container" aria-live="polite"></div>
 {% for message in messages %}<div hidden data-toast="{{ message.tags }}">{{ message }}</div>{% endfor %}
 
