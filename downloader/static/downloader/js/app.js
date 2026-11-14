@@ -793,7 +793,11 @@
     // Live updates for this page's job come from the shared tracker.
     tracker.on((j) => {
       if (!j || j.id !== jobId) return;
-      if (j.removed) { return; }
+      if (j.removed) {
+        job.hidden = true;
+        jobId = null;
+        return;
+      }
       const v = j.v;
       if (!v) return;
       $("#job-title").textContent = v.title || (current && current.video.title) || "Preparing download…";
@@ -870,7 +874,7 @@
   const POS_PREFIX = "rh-pos:";
   const localStore = {
     async get(key) { try { return JSON.parse(localStorage.getItem(POS_PREFIX + key)); } catch (_) { return null; } },
-    async set(key, d) { try { localStorage.setItem(POS_PREFIX + key, JSON.stringify({ ...d, updated: Date.now() })); } catch (_) {} },
+    async set(key, d) { localStorage.setItem(POS_PREFIX + key, JSON.stringify({ ...d, updated: Date.now() })); },
     async remove(key) { localStorage.removeItem(POS_PREFIX + key); },
     async list() {
       const out = [];
@@ -933,7 +937,7 @@
     const input = $("#file-input"), dz = $("#dropzone"), section = $("#player-section"), media = $("#player");
     initSavedScrollIndicator(app);
     const alertBox = $("#file-alert"), alertText = $("#file-alert-text"), alertActions = $("#file-alert-actions");
-    let key = null, title = "", objectUrl = null, saved = null, lastSent = -1, lastTick = 0;
+    let key = null, title = "", objectUrl = null, saved = null, lastSent = -1, lastTick = 0, storageErrorShown = false;
     const resumeNotice = $("#resume-notice");
     let resumeNoticeTimer = null;
     let lookupDone = false; // never write a position before the saved one has been read (it would be clobbered)
@@ -1018,11 +1022,23 @@
 
     function flush(force, keepalive) {
       if (!key || !media.src || !lookupDone) return;
-      const pos = Math.floor(media.ended ? media.duration || 0 : media.currentTime || 0);
+      const hasDuration = Number.isFinite(media.duration) && media.duration > 0;
+      const duration = hasDuration ? Math.floor(media.duration) : (saved && saved.duration) || 0;
+      const currentPosition = Number.isFinite(media.currentTime) ? Math.floor(media.currentTime) : 0;
+      const pos = hasDuration
+        ? Math.min(media.ended ? duration : currentPosition, duration)
+        : (saved && saved.position) || 0;
       if (!force && Math.abs(pos - lastSent) < 3) return;
-      if (!isFinite(media.duration) || !media.duration) return;
       lastSent = pos;
-      store.set(key, { position: pos, duration: Math.floor(media.duration), title }, keepalive).then(() => notifyPosition(key));
+      store.set(key, { position: pos, duration, title }, keepalive)
+        .then(() => notifyPosition(key))
+        .catch((error) => {
+          console.error("Could not save watch progress in this browser.", error);
+          if (!storageErrorShown) {
+            storageErrorShown = true;
+            toast("Watch progress couldn't be saved in this browser.", "error");
+          }
+        });
     }
     media.addEventListener("timeupdate", () => { const n = Date.now(); if (n - lastTick >= 8000) { lastTick = n; flush(false); } });
     media.addEventListener("play", () => { fadeResumeNotice(); flush(true); });
@@ -1137,7 +1153,7 @@
   }
 
   /* ---------------------------------------------------- continue watching */
-  function initContinue() {
+  function initContinue(root) {
     const grid = $("#cw-grid"), recentGrid = $("#recent-grid"), empty = $("#cw-empty");
     const sectionProgress = $("#cw-progress"), sectionRecent = $("#cw-recent");
     const isFinished = (i) => !!(i.duration && i.position >= i.duration * 0.95);
@@ -1244,6 +1260,7 @@
       return el;
     }
     render();
+    root.addEventListener("rh:page-shown", render);
     if (sync) sync.addEventListener("message", (e) => { if (e.data && e.data.type === "position") render(); });
     window.addEventListener("storage", (e) => { if (e.key && e.key.startsWith(POS_PREFIX)) render(); });
     document.addEventListener("visibilitychange", () => { if (!document.hidden) render(); });
@@ -1391,6 +1408,8 @@
       initPage(page.content);
       page.initialized = true;
     }
+    const continueApp = $("#cw-app", page.content);
+    if (continueApp) continueApp.dispatchEvent(new Event("rh:page-shown"));
     if (window.scrollTo) window.scrollTo({ top: 0, behavior: "auto" });
     return true;
   }

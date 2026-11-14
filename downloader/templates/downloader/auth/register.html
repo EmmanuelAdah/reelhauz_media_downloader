@@ -8,6 +8,11 @@
     <h1>Create your account</h1>
     <p class="text-body-secondary">Keep track of every stream.</p>
     <form method="post" novalidate>{% csrf_token %}
+      {% if rate_limit_message %}
+      <div class="alert alert-warning" role="alert" aria-live="assertive">{{ rate_limit_message }}</div>
+      {% elif form.non_field_errors %}
+      <div class="alert alert-danger" role="alert">{{ form.non_field_errors.0 }}</div>
+      {% endif %}
       {% for field in form %}
       <div class="mb-3">
         <label class="form-label" for="{{ field.id_for_label }}">{{ field.label }}</label>
@@ -20,5 +25,8 @@
     </form>
     <p class="auth-alt">Already have an account? <a href="{% url 'login' %}">Log in</a></p>
   </section>
+  <footer class="public-foot auth-foot" aria-label="Site footer">
+    <p class="public-foot-copyright">© {% now "Y" %} Reelhauz. All rights reserved.</p>
+  </footer>
 </div>
 {% endblock %}
