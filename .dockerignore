@@ -6,7 +6,12 @@ __pycache__
 db.sqlite3
 tmp_downloads
 staticfiles
+*.pyc
 
 .env
 .env/
+.env.*
+
+
+node_modules
 
