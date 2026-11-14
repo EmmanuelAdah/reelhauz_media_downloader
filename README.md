@@ -17,12 +17,13 @@ everything**; Celery + Redis is available as an option for bigger deployments.
 | Where you stopped watching | PostgreSQL, **only for logged-in users** (`PlaybackPosition`: media key, title, position, duration) | Until you remove it |
 | Where you stopped watching, anonymous | Your browser's `localStorage` only; never sent to the server | Until you clear it |
 | Where the file is on your device (Chrome, Edge, Brave) | Your browser's IndexedDB only (a `FileSystemFileHandle`); never sent to the server | Until you remove the video from Continue watching, use *Forget location*, or clear watch history |
+| Preferred download quality | PostgreSQL, **only for logged-in users** (`UserPreference`) | Until you change it or remove your account |
 | Access you choose for one download (a cookies.txt, or a browser to read) | A private owner-only temporary file, or nothing | Deleted the moment that download ends. Other sites' cookies are discarded before anything is written; never put in the cache, logs or database |
 
-| Access you choose for one download (cookies.txt, or a browser to read) | A private (owner-only) temporary file / nothing | Deleted the moment that download ends; other sites' cookies are discarded before anything is written; never put in the cache, logs or database |
-
-No video is ever stored in the database or in Redis. Nothing is stored at all for visitors who aren't logged in
-(beyond a rate-limit counter that expires within a minute).
+No video is ever stored in the database or in Redis. Accounts are optional: visitors can download without signing up,
+while a free account syncs watch history and the preferred download quality. Appearance settings remain local to each
+browser. Anonymous playback positions stay in the browser's `localStorage`; temporary job state and rate-limit counters
+expire and are not account history.
 
 ## How it works
 
@@ -126,7 +127,9 @@ docker compose logs -f web worker # inspect startup errors
 Open http://localhost:8000. This starts the Compose stack; deploying only the Dockerfile starts the web process, not
 the database, Redis, or Celery worker. On a server, install Docker Compose, configure `.env` (including a strong
 `DB_PASSWORD`, `DJANGO_SECRET_KEY`, and `DJANGO_ALLOWED_HOSTS`), then run the same command from the project directory.
-The optional `warp` container is not started by default so hosts without VPN/TUN support can run the app.
+The optional `warp` container is not started by default so hosts without VPN/TUN support can run the app. To use
+Cloudflare WARP, use the additional Compose file described below; it waits for the SOCKS proxy to be healthy before
+starting the web and worker services.
 Web and worker share the `tmp_data` volume (staging folder) and Redis (job state).
 The image installs FFmpeg and uses `uv sync --frozen`. Gunicorn runs with threads because each live-progress connection holds one.
 
@@ -168,24 +171,28 @@ It prints each client set's result. If one works, you're done (the app uses it a
 5. Keep yt-dlp current, YouTube changes weekly: `uv lock --upgrade-package yt-dlp && uv sync`.
 
 ### Cloudflare WARP (production on a cloud server)
-`docker-compose.yml` includes an optional `warp` sidecar (`caomingjun/warp`) that exposes a SOCKS5 proxy on `warp:1080`, reachable
-only from the other containers. Enable it explicitly with:
+`docker-compose.yml` includes an optional, digest-pinned `caomingjun/warp` sidecar. The WARP Compose overlay connects
+the web and worker containers to a private proxy network, waits for the SOCKS5 endpoint to pass a health check, and
+does not publish the proxy port to the host. The overlay defaults yt-dlp to `socks5h://warp:1080` (including remote
+DNS resolution):
 ```bash
-YTDLP_PROXY=socks5h://warp:1080 docker compose --profile warp up -d --build
+docker compose --profile warp -f docker-compose.yml -f docker-compose.warp.yml up -d --build
 ```
-All yt-dlp traffic, both metadata and the media download, goes through it; the rest of the app (Postgres, Redis, your
-visitors) does not.
+Both yt-dlp metadata requests from the web service and media requests from the worker use the configured proxy. The
+database, Redis, and visitor traffic do not use WARP.
 ```bash
-docker compose ps                      # warp should say "healthy"
-docker compose exec warp curl -s https://www.cloudflare.com/cdn-cgi/trace | grep warp     # warp=on
-docker compose exec worker python manage.py check_ytdlp https://youtu.be/<id>             # shows Proxy: warp:1080
+docker compose --profile warp -f docker-compose.yml -f docker-compose.warp.yml ps
+docker compose --profile warp -f docker-compose.yml -f docker-compose.warp.yml exec worker python manage.py check_ytdlp https://youtu.be/<id>
 ```
 - Needs a host that allows `/dev/net/tun` and `NET_ADMIN` (any normal VPS or VM with Docker). Managed container platforms
   (Render, Railway, Fly machines without extra config, Cloud Run, ...) usually don't: run the compose stack on a VPS instead.
-- Use your own proxy instead: set `YTDLP_PROXY` in `.env`. Go direct: `YTDLP_PROXY=` (empty).
+- To use an authenticated proxy instead, set `YTDLP_PROXY=socks5h://user:password@proxy.example.com:1080` in `.env`.
+  HTTP(S), `socks5://`, and `socks5h://` proxy URLs are accepted by yt-dlp. Percent-encode reserved characters in
+  usernames and passwords. Restrict `.env` permissions (`chmod 600 .env`) and never commit real proxy credentials;
+  Docker administrators can inspect container environment variables. Leave `YTDLP_PROXY` empty to go direct.
 - WARP shares Cloudflare IPs, so it isn't a guarantee. If YouTube still challenges, combine it with a cookies file
   (option 3 above) or let visitors supply one in the page.
-- If the `warp` container is unhealthy, `docker compose logs warp` shows the registration or tunnel error.
+- If the `warp` container is unhealthy, check `docker compose ... logs warp` for registration, tunnel, or SOCKS errors.
 
 ### "The media tool FFmpeg couldn't be found"
 FFmpeg merges video and audio and converts to MP3/M4A. The app looks for it in this order: `FFMPEG_LOCATION` (a binary or its
@@ -212,8 +219,9 @@ uv lock --upgrade-package yt-dlp && uv sync    # YouTube changes often: keep yt-
 ## Security notes
 
 Single-video YouTube URLs only; users submit a preset key, never a format string, path or command; random 256-bit job
-tokens; temp files confined to a per-job folder; per-IP/user rate limits; server-wide concurrency cap; size and duration
-limits; CSRF on every POST; positions only for the logged-in owner.
+tokens; temp files confined to a per-job folder; login and registration limited to four POST attempts per IP per minute,
+plus per-IP/user download and playback rate limits; server-wide concurrency cap; size and duration limits; CSRF on every
+POST; positions only for the logged-in owner.
 
 ## Project structure
 
