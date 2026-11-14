@@ -34,7 +34,7 @@ class AuthTests(AppTestCase):
 
     def test_bad_login(self):
         res = self.client.post(reverse("login"), {"username": "alice", "password": "wrong"})
-        self.assertContains(res, "Please enter a correct username and password")
+        self.assertContains(res, "Invalid username or password")
 
     def test_logout_requires_post(self):
         self.login()
@@ -43,6 +43,57 @@ class AuthTests(AppTestCase):
     def test_public_pages_need_no_login(self):
         for name in ("home", "watch", "continue_watching", "login", "register"):
             self.assertEqual(self.client.get(reverse(name)).status_code, 200, name)
+
+    def test_download_page_prompt_depends_on_authentication(self):
+        response = self.client.get(reverse("home"))
+        self.assertContains(
+            response,
+            "Paste a link, pick a quality, and save to your device in seconds. "
+            "Start right away without signing up, or create an account for seamless cross-device sync.",
+        )
+
+        self.login()
+        response = self.client.get(reverse("home"))
+        self.assertContains(response, "Paste a link, pick a quality, and save to your device in seconds.")
+        self.assertNotContains(response, "Start right away without signing up")
+
+    def test_login_is_limited_to_four_attempts_per_minute_per_ip(self):
+        login_url = reverse("login")
+        for _ in range(4):
+            response = self.client.post(login_url, {"username": "alice", "password": "wrong"})
+            self.assertEqual(response.status_code, 200)
+
+        response = self.client.post(login_url, {"username": "alice", "password": self.password})
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(response["Retry-After"], "60")
+        self.assertContains(
+            response,
+            '<div class="alert alert-warning" role="alert" aria-live="assertive">Too many attempts. Trying again later!</div>',
+            status_code=429,
+            html=True,
+        )
+        self.assertNotContains(response, "Please enter a correct username and password", status_code=429)
+        self.assertFalse(response.wsgi_request.user.is_authenticated)
+
+    def test_registration_is_limited_to_four_attempts_per_minute_per_ip(self):
+        register_url = reverse("register")
+        for _ in range(4):
+            response = self.client.post(register_url, {"username": "carol", "password1": "weak", "password2": "weak"})
+            self.assertEqual(response.status_code, 200)
+
+        response = self.client.post(
+            register_url,
+            {"username": "carol", "password1": "Xk9-long-pass-77", "password2": "Xk9-long-pass-77"},
+        )
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(response["Retry-After"], "60")
+        self.assertContains(
+            response,
+            '<div class="alert alert-warning" role="alert" aria-live="assertive">Too many attempts. Trying again later!</div>',
+            status_code=429,
+            html=True,
+        )
+        self.assertFalse(User.objects.filter(username="carol").exists())
 
     def test_only_settings_requires_login(self):
         res = self.client.get(reverse("settings"))
@@ -55,12 +106,21 @@ class AuthTests(AppTestCase):
         self.assertContains(anon, "Pick up right where you left off.")
         self.assertContains(anon, "Your experience is our priority.")
         self.assertContains(anon, "Don’t have an account yet?")
+        self.assertContains(anon, "Reelhauz. All rights reserved.")
         self.assertNotContains(anon, 'id="sidebar"')
         self.login()
         member = self.client.get(reverse("home"))
+        self.assertContains(member, "Reelhauz. All rights reserved.")
+        self.assertNotContains(member, "Pick up right where you left off.")
         self.assertContains(member, 'id="sidebar"')
         self.assertContains(member, 'id="tray"')  # live downloads tray on every page
         self.assertContains(self.client.get(reverse("watch")), 'id="tray"')
+
+    def test_auth_pages_include_the_bottom_copyright_footer(self):
+        for name in ("login", "register"):
+            response = self.client.get(reverse(name))
+            self.assertContains(response, 'class="public-foot auth-foot"')
+            self.assertContains(response, "Reelhauz. All rights reserved.")
 
     def test_brand_name_is_reelhauz_everywhere(self):
         self.login()

@@ -134,14 +134,14 @@ a { color: var(--rh-accent); }
 .nav-list a, .nav-button { display: flex; align-items: center; gap: 0.75rem; padding: 0.6rem 0.7rem; border-radius: 8px; color: var(--rh-muted); text-decoration: none; font-weight: 500; background: none; border: 0; width: 100%; text-align: left; }
 .nav-list a:hover, .nav-button:hover { background: var(--rh-sunken); color: var(--rh-ink); }
 .nav-list a.active { background: color-mix(in srgb, var(--rh-accent) 14%, transparent); color: var(--rh-accent); font-weight: 600; }
-.main { min-width: 0; display: flex; flex-direction: column; }
+.main { min-width: 0; min-height: 100vh; display: flex; flex-direction: column; }
 .topbar { display: flex; align-items: center; gap: 1rem; padding: 0.8rem 1.75rem; border-bottom: 1px solid var(--rh-line); background: var(--rh-bg); position: sticky; top: 0; z-index: 20; }
 .topbar-search { flex: 1; max-width: 460px; position: relative; }
 .topbar-search i { position: absolute; left: 0.8rem; top: 50%; transform: translateY(-50%); color: var(--rh-muted); }
 .topbar-search input { width: 100%; padding: 0.5rem 0.8rem 0.5rem 2.2rem; border-radius: 8px; border: 1px solid var(--rh-line); background: var(--rh-panel); color: var(--rh-ink); }
 .topbar-right { margin-left: auto; display: flex; align-items: center; gap: 0.5rem; }
 .user-chip { display: flex; align-items: center; gap: 0.4rem; color: var(--rh-muted); font-weight: 500; }
-.content { padding: 1.75rem; max-width: 1280px; width: 100%; margin: 0 auto; }
+.content { padding: 1.75rem; max-width: 1280px; width: 100%; margin: 0 auto; flex: 1; }
 .sidebar-backdrop { position: fixed; inset: 0; background: rgb(0 0 0 / 0.5); z-index: 30; }
 
 @media (max-width: 991.98px) {
@@ -231,9 +231,9 @@ a { color: var(--rh-accent); }
 @media (max-width: 767.98px) { .preview-card { grid-template-columns: 1fr; } }
 
 /* ---------- Auth ---------- */
-.auth-wrap { min-height: 100vh; display: grid; place-items: center; padding: 1.5rem; position: relative; }
+.auth-wrap { min-height: 100vh; display: flex; flex-direction: column; align-items: center; padding: 1.5rem; position: relative; }
 .auth-theme { position: absolute; top: 1rem; right: 1rem; }
-.auth-card { width: 100%; max-width: 420px; background: var(--rh-panel); border: 1px solid var(--rh-line); border-radius: 14px; padding: 2rem; }
+.auth-card { width: 100%; max-width: 420px; margin: auto 0; background: var(--rh-panel); border: 1px solid var(--rh-line); border-radius: 14px; padding: 2rem; }
 .auth-alt { margin: 1.25rem 0 0; text-align: center; color: var(--rh-muted); }
 
 /* ---------- Toasts / modal ---------- */
@@ -259,7 +259,7 @@ a { color: var(--rh-accent); }
 
 /* ---------- Public layout ---------- */
 .app-public { min-height: 100vh; display: flex; }
-.app-public > .main { flex: 1; min-height: 100vh; }
+.app-public > .main { flex: 1; }
 .app-public .content { max-width: 900px; padding-top: clamp(1.75rem, 6vw, 4rem); flex: 1; }
 .app-public .topbar { gap: 1.5rem; }
 .top-nav { display: flex; gap: 0.25rem; }
@@ -267,10 +267,12 @@ a { color: var(--rh-accent); }
 .top-nav a:hover { background: var(--rh-sunken); color: var(--rh-ink); }
 .top-nav a.active { color: var(--rh-accent); background: color-mix(in srgb, var(--rh-accent) 14%, transparent); }
 @media (max-width: 767.98px) { .top-nav { display: none; } .tray-label { display: none; } }
-.public-foot { width: min(100%, 900px); margin: 0 auto; padding: 1.5rem 1.25rem 1.75rem; text-align: center; color: var(--rh-muted); font-size: 0.88rem; border-top: 1px solid var(--rh-line); }
+.public-foot { width: min(100%, 900px); margin: auto auto 0; padding: 1.5rem 1.25rem 1.75rem; text-align: center; color: var(--rh-muted); font-size: 0.88rem; border-top: 1px solid var(--rh-line); }
 .public-foot p { margin: 0.25rem 0; }
 .public-foot-title { color: var(--rh-ink); font-family: var(--rh-font-display); font-size: 1.1rem; font-weight: 700; }
 .public-foot-cta { margin-top: 0.65rem !important; }
+.public-foot-copyright { margin-top: 0.85rem !important; font-size: 0.78rem; }
+.auth-foot { flex-shrink: 0; }
 .fine-print { color: var(--rh-muted); font-size: 0.82rem; margin: 0; }
 .how-note { margin-top: 2rem; }
 .format-opt input:disabled + label { opacity: 0.5; cursor: not-allowed; }

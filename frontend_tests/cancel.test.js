@@ -19,6 +19,8 @@ function boot({ cancelResponse } = {}) {
   const html = fs.readFileSync(path.join(__dirname, ".pages", "home.html"), "utf8").replace(/<script src=[^>]*><\/script>/g, "").replace(/<link [^>]*>/g, "");
   const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://localhost/", pretendToBeVisual: true });
   const w = dom.window, calls = [], toasts = [], sources = [];
+  w.ResizeObserver = class { observe() {} };
+  w.scrollTo = () => {};
   w.bootstrap = { Toast: class { constructor(el) { toasts.push(el.textContent); } show() {} }, Modal: { getOrCreateInstance: () => ({ show() {}, hide() {} }) } };
   w.indexedDB = new IDBFactory(); w.showOpenFilePicker = undefined;
   w.requestAnimationFrame = (f) => setTimeout(f, 0);
@@ -143,6 +145,9 @@ const stage = (p) => p.$("#job [data-role=stage]").textContent;
     check("tray changes Save to my device into a disabled Saved state", !!savedButton && savedButton.disabled);
     check("saved job is persisted and can be dismissed without offering Discard", JSON.parse(p.w.localStorage.getItem("rh-jobs"))[0].saved &&
       rowButtons.includes("Dismiss") && !rowButtons.includes("Discard"));
+    p.$$("#tray-list button").find((button) => button.textContent.trim() === "Dismiss").click();
+    await tick(40);
+    check("dismissing the saved tray item also hides its main download card", p.$("#job").hidden);
   }
   console.log(failed ? `\n${failed} CHECK(S) FAILED` : "\nall cancel/status UI checks passed");
   process.exit(failed ? 1 : 0);

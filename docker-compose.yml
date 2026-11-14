@@ -1,25 +1,42 @@
+name: reelhauz
+
 x-app: &app
-  build: .
-  env_file: .env
+  build:
+    context: .
+    dockerfile: Dockerfile
+
+  env_file:
+    - .env
+
   environment: &app-env
     DJANGO_DEBUG: "False"
-    DJANGO_ALLOWED_HOSTS: "localhost,127.0.0.1"
-    DATABASE_URL: postgres://${DB_USER:-video_user}:${DB_PASSWORD:?Set DB_PASSWORD in .env}@db:5432/${DB_NAME:-video_downloader}
-    DOWNLOAD_BACKEND: celery   # production style: a dedicated worker container does the downloading
+    DJANGO_BEHIND_PROXY: "True"
+    DJANGO_SECURE_COOKIES: "True"
+    DJANGO_ALLOWED_HOSTS: "${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1,yourdomain.com,www.yourdomain.com}"
+    DJANGO_CSRF_TRUSTED_ORIGINS: "${DJANGO_CSRF_TRUSTED_ORIGINS:-https://yourdomain.com,https://www.yourdomain.com}"
+    DJANGO_TIME_ZONE: Africa/Lagos
+
+    # DB_PASSWORD must be URL-safe (or percent-encoded) because it sits inside a URL
+    DATABASE_URL: "postgres://${DB_USER:-video_user}:${DB_PASSWORD:?Set DB_PASSWORD in .env}@db:5432/${DB_NAME:-video_downloader}"
+
+    DOWNLOAD_BACKEND: celery
     REDIS_URL: redis://redis:6379/0
     DOWNLOAD_TMP_DIR: /app/tmp_downloads
-    # All yt-dlp traffic (metadata + media) leaves through the Cloudflare WARP sidecar below, because YouTube
-    # blocks most datacenter IPs. Override in .env (YTDLP_PROXY=http://user:pass@host:port for your own proxy,
-    # or set it to an empty value to go direct). Note: socks5h = DNS is resolved by the proxy as well.
-    YTDLP_PROXY: ${YTDLP_PROXY-}
+    YTDLP_PROXY: socks5h://warp:1080
+
   volumes:
     - tmp_data:/app/tmp_downloads
+
   restart: unless-stopped
+
   depends_on:
     db:
       condition: service_healthy
     redis:
       condition: service_healthy
+    warp:
+      condition: service_healthy
+
 
 services:
   db:
@@ -32,26 +49,26 @@ services:
     volumes:
       - pg_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
-      interval: 5s
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 10s
       timeout: 5s
-      retries: 10
+      retries: 5
 
   redis:
     image: redis:7-alpine
     restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
+      interval: 10s
       timeout: 5s
-      retries: 10
+      retries: 5
 
-  # Cloudflare WARP as an outbound SOCKS5 proxy (warp:1080 inside the compose network, never published to the host).
-  # Registers a free WARP account on first start and keeps it in the warp_data volume so the identity survives restarts.
-  # Needs /dev/net/tun and NET_ADMIN (standard for VPN containers). Some PaaS hosts don't allow that: see README.
   warp:
-    image: caomingjun/warp:latest
-    profiles: ["warp"]
+    image: caomingjun/warp@sha256:2891b92420a193a49c74cbd4387bee91f5c35fbc487fca8e8f739baed52c1d2b
+    container_name: reelhauz-warp
     restart: unless-stopped
     cap_add:
       - NET_ADMIN
@@ -65,28 +82,80 @@ services:
     volumes:
       - warp_data:/var/lib/cloudflare-warp
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS --max-time 8 https://www.cloudflare.com/cdn-cgi/trace | grep -Eq 'warp=(on|plus)'"]
+      test:
+        - CMD-SHELL
+        - curl --socks5-hostname 127.0.0.1:1080 -fsS --max-time 10 https://www.cloudflare.com/cdn-cgi/trace | grep -Eq 'warp=(on|plus)'
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 60s
+
+  web:
+    <<: *app
+    environment:
+      <<: *app-env
+      RUN_MIGRATIONS: "true"
+    command:
+      - gunicorn
+      - config.wsgi:application
+      - --bind
+      - 0.0.0.0:8000
+      - --worker-class
+      - gthread
+      - --workers
+      - "2"
+      - --threads
+      - "8"
+      - --timeout
+      - "120"
+      - --access-logfile
+      - "-"
+      - --error-logfile
+      - "-"
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS -o /dev/null http://127.0.0.1:8000/ || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 40s
 
-  web:
-    <<: *app
-    command: sh -c "python manage.py migrate --noinput && gunicorn config.wsgi:application --bind 0.0.0.0:8000 --worker-class gthread --workers 2 --threads 16 --timeout 120"
-    ports:
-      - "8000:8000"
-
   worker:
     <<: *app
-    command: celery -A config worker --loglevel=info --concurrency=2
+    environment:
+      <<: *app-env
+      RUN_MIGRATIONS: "false"
+    command:
+      - celery
+      - -A
+      - config
+      - worker
+      - --loglevel=info
+      - --concurrency=2
     depends_on:
       db:
         condition: service_healthy
       redis:
         condition: service_healthy
+      warp:
+        condition: service_healthy
+      web:
+        condition: service_healthy   # waits for migrations to finish
+
+  nginx:
+    image: nginx:1.28-alpine
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:80"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      web:
+        condition: service_healthy
 
 volumes:
   pg_data:
+  redis_data:
   tmp_data:
   warp_data:

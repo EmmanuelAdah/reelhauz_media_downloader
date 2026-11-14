@@ -22,6 +22,11 @@ class _Styled:
 
 
 class LoginForm(_Styled, AuthenticationForm):
+    error_messages = {
+        **AuthenticationForm.error_messages,
+        "invalid_login": "Invalid username or password",
+    }
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._style()
