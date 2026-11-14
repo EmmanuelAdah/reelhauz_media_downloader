@@ -16,6 +16,7 @@ dependencies = [
     "imageio-ffmpeg>=0.6.0",
     "dj-database-url>=3.1.2",
     "dotenv>=0.9.9",
+    "yt-dlp-proxy>=1.0.7",
 ]
 
 [tool.uv]
