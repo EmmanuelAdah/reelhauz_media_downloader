@@ -1,0 +1,79 @@
+databases:
+  - name: reelhauz-db
+    databaseName: video_downloader
+    user: video_user
+    plan: basic-256mb        # pick a plan available on your account
+    region: oregon           # use the SAME region for everything
+
+services:
+  - type: keyvalue
+    name: reelhauz-redis
+    plan: starter
+    region: oregon
+    ipAllowList: []          # internal access only
+
+  - type: web
+    name: reelhauz-web
+    runtime: docker
+    plan: starter
+    region: oregon
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: reelhauz-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: reelhauz-redis
+          property: connectionString
+      - key: DJANGO_SECRET_KEY
+        generateValue: true
+      - key: DJANGO_DEBUG
+        value: "False"
+      - key: DJANGO_BEHIND_PROXY
+        value: "True"
+      - key: DJANGO_SECURE_COOKIES
+        value: "True"
+      - key: DJANGO_ALLOWED_HOSTS
+        value: ".onrender.com,yourdomain.com,www.yourdomain.com"
+      - key: DJANGO_CSRF_TRUSTED_ORIGINS
+        value: "https://*.onrender.com,https://yourdomain.com,https://www.yourdomain.com"
+      - key: DJANGO_TIME_ZONE
+        value: Africa/Lagos
+      - key: DOWNLOAD_BACKEND
+        value: celery
+      - key: DOWNLOAD_TMP_DIR
+        value: /app/tmp_downloads
+      - key: RUN_MIGRATIONS
+        value: "true"
+
+  - type: worker
+    name: reelhauz-worker
+    runtime: docker
+    plan: starter
+    region: oregon
+    dockerfilePath: ./Dockerfile
+    dockerCommand: celery -A config worker --loglevel=info --concurrency=2
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: reelhauz-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: reelhauz-redis
+          property: connectionString
+      - key: DJANGO_SECRET_KEY
+        sync: false          # copy the same value from the web service
+      - key: DJANGO_DEBUG
+        value: "False"
+      - key: DOWNLOAD_BACKEND
+        value: celery
+      - key: DOWNLOAD_TMP_DIR
+        value: /app/tmp_downloads
+      - key: RUN_MIGRATIONS
+        value: "false"
