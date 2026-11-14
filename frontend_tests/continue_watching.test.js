@@ -9,14 +9,16 @@ const tick = (ms = 30) => new Promise((r) => setTimeout(r, ms));
 let failed = 0;
 const check = (name, cond) => { console.log((cond ? "  ok   " : "  FAIL ") + name); if (!cond) failed++; };
 
-function boot(page, ls) {
+function boot(page, ls, fetchImpl) {
   const html = fs.readFileSync(path.join(__dirname, ".pages", `${page}.html`), "utf8").replace(/<script src=[^>]*><\/script>/g, "").replace(/<link [^>]*>/g, "");
-  const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://localhost/", pretendToBeVisual: true });
+  const dom = new JSDOM(html, { runScripts: "outside-only", url: `http://localhost/${page === "watch" ? "watch/" : page === "cw" ? "continue-watching/" : ""}`, pretendToBeVisual: true });
   const w = dom.window;
   if (ls) for (const [k, v] of Object.entries(ls)) w.localStorage.setItem(k, v);
+  w.ResizeObserver = class { observe() {} };
+  w.scrollTo = () => {};
   w.bootstrap = { Toast: class { show() {} }, Modal: { getOrCreateInstance: () => ({ show() {}, hide() {} }) } };
   w.indexedDB = new IDBFactory(); w.showOpenFilePicker = async () => { throw Object.assign(new Error(), { name: "AbortError" }); };
-  w.fetch = () => Promise.resolve({ ok: false, status: 404, json: async () => ({}) });
+  w.fetch = fetchImpl || (() => Promise.resolve({ ok: false, status: 404, json: async () => ({}) }));
   w.requestAnimationFrame = (f) => setTimeout(f, 0);
   w.EventSource = class { addEventListener() {} close() {} };
   w.URL.createObjectURL = () => "blob:m"; w.URL.revokeObjectURL = () => {};
@@ -72,6 +74,47 @@ const titles = (w, sel) => [...w.document.querySelectorAll(sel + " .vcard-title"
   const ls2 = {}; keys.forEach((k) => (ls2[k] = p.localStorage.getItem(k)));
   const w2 = boot("cw", ls2); await tick(150);
   check("Continue watching page lists all three", w2.document.querySelectorAll("#cw-grid .vcard, #recent-grid .vcard").length === 3);
+
+  console.log("GUEST: opened media is saved in browser storage and appears after in-app navigation");
+  const cwHtml = fs.readFileSync(path.join(__dirname, ".pages", "cw.html"), "utf8");
+  const watchHtml = fs.readFileSync(path.join(__dirname, ".pages", "watch.html"), "utf8");
+  const guest = boot("watch", {}, async (url) => ({
+    ok: true,
+    redirected: false,
+    text: async () => new URL(url).pathname === "/watch/" ? watchHtml : cwHtml,
+  }));
+  const guestMedia = guest.document.querySelector("#player"), guestInput = guest.document.querySelector("#file-input");
+  const clickLink = async (selector) => {
+    guest.document.querySelector(selector).dispatchEvent(new guest.MouseEvent("click", { bubbles: true, cancelable: true, button: 0 }));
+    await tick(220);
+  };
+  const openGuestVideo = async (filename, position) => {
+    Object.defineProperty(guestInput, "files", {
+      value: [new guest.File(["video"], filename, { type: "video/mp4" })],
+      configurable: true,
+    });
+    guestInput.dispatchEvent(new guest.Event("change"));
+    await tick(60);
+    Object.defineProperty(guestMedia, "duration", { value: 300, configurable: true });
+    guestMedia.dispatchEvent(new guest.Event("loadedmetadata"));
+    await tick(60);
+    guestMedia.currentTime = position;
+    guestMedia.dispatchEvent(new guest.Event("pause"));
+    await tick(60);
+  };
+  await openGuestVideo("Guest clip one [ffffffffff1].mp4", 45);
+  check("guest media is recorded before leaving the player", !!guest.localStorage.getItem("rh-pos:ffffffffff1"));
+  await clickLink('.top-nav a[href="/continue-watching/"]');
+  check("guest sees the first media in Continue watching", titles(guest, "#cw-grid")[0] === "Guest clip one");
+  await clickLink('.top-nav a[href="/watch/"]');
+  await openGuestVideo("Guest clip two [ffffffffff2].mp4", 3);
+  check("second guest media is recorded in browser storage", !!guest.localStorage.getItem("rh-pos:ffffffffff2"));
+  await clickLink('.top-nav a[href="/continue-watching/"]');
+  const guestTitles = [...titles(guest, "#cw-grid"), ...titles(guest, "#recent-grid")];
+  check("guest sees both media across Continue watching and Recently watched", guestTitles.length === 2 &&
+    guestTitles.includes("Guest clip one") && guestTitles.includes("Guest clip two") &&
+    guest.document.querySelector("#cw-grid").textContent.includes("0:45") &&
+    guest.document.querySelector("#recent-grid").textContent.includes("Just started"));
 
   console.log("PLAYER: opening the same file again does not wipe its saved position before resuming");
   const q = boot("watch", { "rh-pos:ccccccccccc": pos(90, 600, "Clip three", 9) });
