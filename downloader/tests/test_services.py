@@ -1,6 +1,8 @@
+from io import StringIO
 from pathlib import Path
 from unittest import mock
 
+from django.core.management import call_command
 from django.test import SimpleTestCase, override_settings
 
 from downloader.services import ytdlp_service as svc
@@ -201,13 +203,20 @@ class YtdlpOptionsTests(SimpleTestCase):
         with mock.patch.object(svc.shutil, "which", side_effect=lambda n: {"bun": "/x/bun", "deno": "/x/deno"}.get(n)):
             self.assertEqual(svc.detect_js_runtime(), {"bun": {"path": "/x/bun"}})
 
-    @override_settings(YTDLP_PROXY="http://proxy.example:3128")
+    @override_settings(YTDLP_PROXY="socks5h://user:secret@proxy.example:1080")
     def test_options_carry_proxy_and_runtime(self):
         with mock.patch.object(svc.shutil, "which", side_effect=lambda n: {"node": "/usr/bin/node"}.get(n)):
             opts = svc._base_options()
-        self.assertEqual(opts["proxy"], "http://proxy.example:3128")
+        self.assertEqual(opts["proxy"], "socks5h://user:secret@proxy.example:1080")
         self.assertEqual(opts["js_runtimes"], {"node": {"path": "/usr/bin/node"}})
         self.assertTrue(opts["noplaylist"])
+
+    @override_settings(YTDLP_PROXY="socks5h://user:secret@proxy.example:1080")
+    def test_check_command_never_prints_proxy_credentials(self):
+        output = StringIO()
+        call_command("check_ytdlp", stdout=output)
+        self.assertIn("Proxy:                 configured", output.getvalue())
+        self.assertNotIn("secret", output.getvalue())
 
     def test_yt_dlp_solver_package_is_installed(self):
         import importlib.util

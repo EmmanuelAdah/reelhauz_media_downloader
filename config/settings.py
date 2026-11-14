@@ -50,6 +50,7 @@ def database_from_url(url: str) -> dict:
             "HOST": parsed.hostname or "localhost",
             "PORT": str(parsed.port or 5432),
             "CONN_MAX_AGE": 60,
+            "CONN_HEALTH_CHECKS": True,
         }
     raise ImproperlyConfigured(f"Unsupported DATABASE_URL scheme: {parsed.scheme!r}")
 
@@ -68,7 +69,13 @@ if not SECRET_KEY:
     else:
         raise ImproperlyConfigured("DJANGO_SECRET_KEY must be set when DJANGO_DEBUG is false.")
 
-ALLOWED_HOSTS = env_list("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1")
+ALLOWED_HOSTS = [host.strip()
+    for host in os.getenv(
+        "DJANGO_ALLOWED_HOSTS",
+        "localhost,127.0.0.1,0.0.0.0"
+    ).split(",")
+    if host.strip()]
+
 CSRF_TRUSTED_ORIGINS = env_list("DJANGO_CSRF_TRUSTED_ORIGINS")
 
 INSTALLED_APPS = [
@@ -205,18 +212,49 @@ CELERY_WORKER_PREFETCH_MULTIPLIER = 1
 CELERY_TASK_TRACK_STARTED = True
 
 # --------------------------------------------------------------------------- #
-# Security
+# Security / reverse proxy
 # --------------------------------------------------------------------------- #
-SECURE_COOKIES = env_bool("DJANGO_SECURE_COOKIES", False)  # set true behind HTTPS
+
+# Your public-facing Ubuntu Nginx terminates HTTPS.
+# Docker Nginx forwards the original X-Forwarded-Proto header to Django.
+
+DJANGO_BEHIND_PROXY = env_bool("DJANGO_BEHIND_PROXY", False)
+SECURE_COOKIES = env_bool("DJANGO_SECURE_COOKIES", not DEBUG)
+
+# Only trust the forwarded HTTPS scheme when running behind your
+# explicitly configured and trusted reverse proxy.
+if DJANGO_BEHIND_PROXY:
+    SECURE_PROXY_SSL_HEADER = (
+        "HTTP_X_FORWARDED_PROTO",
+        "https",
+    )
+
+# Browser cookies must only travel over HTTPS in production.
 SESSION_COOKIE_SECURE = SECURE_COOKIES
 CSRF_COOKIE_SECURE = SECURE_COOKIES
+
+# Keep CSRF cookie readable by JavaScript if your frontend uses
+# the cookie-to-header AJAX pattern.
 SESSION_COOKIE_HTTPONLY = True
+CSRF_COOKIE_HTTPONLY = False
+
+# Same-origin forms and AJAX requests work with Lax.
 SESSION_COOKIE_SAMESITE = "Lax"
-X_FRAME_OPTIONS = "SAMEORIGIN"
+CSRF_COOKIE_SAMESITE = "Lax"
+
+# Ubuntu Nginx handles HTTP -> HTTPS redirection.
+# Avoid redirect loops at the Django layer.
+SECURE_SSL_REDIRECT = False
+
+# Do not set CSRF_COOKIE_DOMAIN unless you intentionally need
+# a cookie shared across subdomains.
+CSRF_COOKIE_PATH = "/"
+SESSION_COOKIE_PATH = "/"
+
+# Additional security headers.
 SECURE_CONTENT_TYPE_NOSNIFF = True
 SECURE_REFERRER_POLICY = "same-origin"
-if env_bool("DJANGO_BEHIND_PROXY", False):
-    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+X_FRAME_OPTIONS = "SAMEORIGIN"
 
 # --------------------------------------------------------------------------- #
 # Logging
